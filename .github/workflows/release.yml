@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  push:
+    # Trigger this workflow only when you push a tag that starts with "v",
+    # e.g. "v1.0.0" or "v2.0.0".
+    tags:
+      - 'v*.*.*'
+
+# Add permissions needed for creating releases
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          # We fetch all commits & tags so GoReleaser can properly read the tag version
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Run GoReleaser
+        # The official GoReleaser GitHub Action
+        uses: goreleaser/goreleaser-action@v4
+        with:
+          # By default, it will look for .goreleaser.yml in the repo root
+          version: latest
+          args: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
