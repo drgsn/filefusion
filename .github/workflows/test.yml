@@ -21,12 +21,14 @@ jobs:
 
       - name: Set up Go
         uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
 
       - name: Install dependencies
         run: go mod download
 
       - name: Run tests
-        run: go test -coverprofile=coverage.txt
+        run: go test ./... -coverprofile=coverage.txt -covermode=atomic
 
       - name: Upload results to Codecov
         uses: codecov/codecov-action@v5
