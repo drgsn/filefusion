@@ -83,16 +83,15 @@ func (m *Mixer) ValidateOptions() error {
 		return &MixError{Message: "max file size must be greater than 0"}
 	}
 
+	if m.options.MaxOutputSize <= 0 {
+		return &MixError{Message: "max output size must be greater than 0"}
+	}
+
 	switch m.options.OutputType {
 	case OutputTypeXML, OutputTypeJSON, OutputTypeYAML:
 		// Valid output types
 	default:
 		return &MixError{Message: fmt.Sprintf("unsupported output type: %s", m.options.OutputType)}
-	}
-
-	// Set default MaxFileSize only after validation
-	if m.options.MaxFileSize == 0 {
-		m.options.MaxFileSize = 10 * 1024 * 1024 // Default 10MB
 	}
 
 	return nil

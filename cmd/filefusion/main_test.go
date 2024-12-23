@@ -12,7 +12,6 @@ import (
 )
 
 func setupRootCmd() {
-	// Reset the command and its flags completely
 	rootCmd = &cobra.Command{
 		Use:   "filefusion [paths...]",
 		Short: "Filefusion - File concatenation tool optimized for LLM usage",
@@ -25,7 +24,8 @@ It preserves file metadata and structures the output in an XML-like or JSON form
 	rootCmd.PersistentFlags().StringVarP(&outputPath, "output", "o", "", "output file path")
 	rootCmd.PersistentFlags().StringVarP(&pattern, "pattern", "p", "*.go,*.json,*.yaml,*.yml", "file patterns")
 	rootCmd.PersistentFlags().StringVarP(&exclude, "exclude", "e", "", "exclude patterns")
-	rootCmd.PersistentFlags().StringVar(&maxFileSize, "max-size", "10MB", "maximum size per file")
+	rootCmd.PersistentFlags().StringVar(&maxFileSize, "max-file-size", "10MB", "maximum size for individual input files")
+	rootCmd.PersistentFlags().StringVar(&maxOutputSize, "max-output-size", "50MB", "maximum size for output file")
 }
 
 func TestDeriveOutputPath(t *testing.T) {
@@ -492,14 +492,24 @@ func TestRootCommandFlags(t *testing.T) {
 		expectedError string
 	}{
 		{
-			name:          "invalid max size format",
-			args:          []string{"--max-size", "10Z", "some/path"},
-			expectedError: "invalid max-size value: invalid size format: must end with B, KB, MB, GB, or TB",
+			name:          "invalid max file size format",
+			args:          []string{"--max-file-size", "10Z", "some/path"},
+			expectedError: "invalid max-file-size value: invalid size format: must end with B, KB, MB, GB, or TB",
 		},
 		{
-			name:          "negative max size",
-			args:          []string{"--max-size", "-5MB", "--pattern", "*.go", "some/path"},
-			expectedError: "invalid max-size value: size must be a positive number",
+			name:          "invalid max output size format",
+			args:          []string{"--max-output-size", "10Z", "some/path"},
+			expectedError: "invalid max-output-size value: invalid size format: must end with B, KB, MB, GB, or TB",
+		},
+		{
+			name:          "negative max file size",
+			args:          []string{"--max-file-size", "-5MB", "--pattern", "*.go", "some/path"},
+			expectedError: "invalid max-file-size value: size must be a positive number",
+		},
+		{
+			name:          "negative max output size",
+			args:          []string{"--max-output-size", "-5MB", "--pattern", "*.go", "some/path"},
+			expectedError: "invalid max-output-size value: size must be a positive number",
 		},
 		{
 			name:          "empty pattern",
@@ -508,7 +518,7 @@ func TestRootCommandFlags(t *testing.T) {
 		},
 		{
 			name:          "invalid output extension",
-			args:          []string{"--output", "output.txt", "--pattern", "*.go", "--max-size", "10MB", "some/path"},
+			args:          []string{"--output", "output.txt", "--pattern", "*.go", "some/path"},
 			expectedError: "invalid output file extension: must be .xml, .json, .yaml, or .yml",
 		},
 		{
@@ -622,10 +632,11 @@ func TestOutputContents(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		outputFlag    string
-		expectedStart string
-		notExpected   string
+		name           string
+		outputFlag     string
+		expectedStart  string
+		notExpected    string
+		outputContains string
 	}{
 		{
 			name:          "XML output",
@@ -640,10 +651,10 @@ func TestOutputContents(t *testing.T) {
 			notExpected:   "xml",
 		},
 		{
-			name:          "YAML output",
-			outputFlag:    "output.yaml",
-			expectedStart: "documents:",
-			notExpected:   "xml",
+			name:           "YAML output",
+			outputFlag:     "output.yaml",
+			outputContains: "documents:",
+			notExpected:    "xml",
 		},
 	}
 
@@ -657,6 +668,8 @@ func TestOutputContents(t *testing.T) {
 			rootCmd.SetArgs([]string{
 				"--output", outputPath,
 				"--pattern", "*.go,*.json",
+				"--max-file-size", "1MB",
+				"--max-output-size", "10MB",
 				tmpDir,
 			})
 
@@ -670,12 +683,18 @@ func TestOutputContents(t *testing.T) {
 				t.Fatalf("Failed to read output file: %v", err)
 			}
 
-			// Check content starts with expected string
-			if !strings.Contains(string(content), tt.expectedStart) {
-				t.Errorf("Output should contain %q", tt.expectedStart)
+			if tt.expectedStart != "" {
+				if !strings.HasPrefix(string(content), tt.expectedStart) {
+					t.Errorf("Output should start with %q", tt.expectedStart)
+				}
 			}
 
-			// Check content doesn't contain unexpected string
+			if tt.outputContains != "" {
+				if !strings.Contains(string(content), tt.outputContains) {
+					t.Errorf("Output should contain %q", tt.outputContains)
+				}
+			}
+
 			if strings.Contains(string(content), tt.notExpected) {
 				t.Errorf("Output should not contain %q", tt.notExpected)
 			}
@@ -684,54 +703,151 @@ func TestOutputContents(t *testing.T) {
 }
 
 func TestSizeExceedCase(t *testing.T) {
-	// Create temp dir with files exceeding max size
-	tmpDir, err := os.MkdirTemp("", "filefusion-test-*")
+	tmpDir, err := os.MkdirTemp("", "filefusion-size-exceed-*")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a large test file
+	content := strings.Repeat("x", 2*1024*1024) // 2MB content
+	err = os.WriteFile(filepath.Join(tmpDir, "large.txt"), []byte(content), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	setupRootCmd()
+	rootCmd.SetArgs([]string{
+		"--max-output-size", "1MB",
+		"--pattern", "*.txt",
+		tmpDir,
+	})
+
+	err = rootCmd.Execute()
+	if err == nil {
+		t.Fatal("Expected error but got none")
+	}
+
+	if !strings.Contains(err.Error(), "output size exceeds maximum") {
+		t.Errorf("Expected error about exceeding size limit, got: %v", err)
+	}
+}
+
+func TestSizeLimits(t *testing.T) {
+	// Create temporary test directory
+	tmpDir, err := os.MkdirTemp("", "filefusion-size-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
 	// Create test files with specific sizes
 	files := map[string]struct {
-		name    string
-		content string
+		size     int
+		name     string
+		included bool
 	}{
-		"test1.go": {
-			name:    "test1.go",
-			content: strings.Repeat("a", 1024*1024), // 1MB
-		},
-		"test2.go": {
-			name:    "test2.go",
-			content: strings.Repeat("b", 1024*1024), // 1MB
-		},
+		"small.go":  {size: 500 * 1024, name: "small.go", included: true},        // 500KB
+		"medium.go": {size: 5 * 1024 * 1024, name: "medium.go", included: true},  // 5MB
+		"large.go":  {size: 15 * 1024 * 1024, name: "large.go", included: false}, // 15MB
 	}
 
-	// Create the files
+	// Create files
 	for _, file := range files {
+		content := strings.Repeat("x", file.size)
 		path := filepath.Join(tmpDir, file.name)
-		if err := os.WriteFile(path, []byte(file.content), 0644); err != nil {
-			t.Fatal(err)
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatalf("Failed to create test file: %v", err)
 		}
 	}
 
-	// Set up command
-	setupRootCmd()
-	rootCmd.SetArgs([]string{
-		"--max-size", "1MB", // Set max size to 1MB
-		"--pattern", "*.go",
-		tmpDir,
-	})
-
-	// Execute command
-	err = rootCmd.Execute()
-
-	// Verify we get an error about exceeding size
-	if err == nil {
-		t.Fatal("Expected error for exceeding max size")
+	tests := []struct {
+		name          string
+		maxFileSize   string
+		maxOutputSize string
+		expectedFiles int
+		shouldError   bool
+		errorContains string
+	}{
+		{
+			name:          "default limits",
+			maxFileSize:   "10MB",
+			maxOutputSize: "50MB",
+			expectedFiles: 2,
+			shouldError:   false,
+		},
+		{
+			name:          "small file size limit",
+			maxFileSize:   "1MB",
+			maxOutputSize: "50MB",
+			expectedFiles: 1,
+			shouldError:   false,
+		},
+		{
+			name:          "small output size limit",
+			maxFileSize:   "10MB",
+			maxOutputSize: "1MB",
+			expectedFiles: 2,
+			shouldError:   true,
+			errorContains: "output size exceeds maximum allowed size",
+		},
+		{
+			name:          "invalid max file size",
+			maxFileSize:   "invalid",
+			maxOutputSize: "50MB",
+			shouldError:   true,
+			errorContains: "invalid max-file-size value",
+		},
+		{
+			name:          "invalid max output size",
+			maxFileSize:   "10MB",
+			maxOutputSize: "invalid",
+			shouldError:   true,
+			errorContains: "invalid max-output-size value",
+		},
 	}
 
-	// Check that the error message contains the expected text
-	if !strings.Contains(err.Error(), "total size exceeds maximum allowed size") {
-		t.Errorf("Expected error about exceeding size limit, got: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outputPath := filepath.Join(tmpDir, "output.xml")
+			setupRootCmd()
+
+			args := []string{
+				"--output", outputPath,
+				"--max-file-size", tt.maxFileSize,
+				"--max-output-size", tt.maxOutputSize,
+				tmpDir,
+			}
+
+			rootCmd.SetArgs(args)
+			err := rootCmd.Execute()
+
+			if tt.shouldError {
+				if err == nil {
+					t.Error("Expected error but got none")
+					return
+				}
+				if !strings.Contains(err.Error(), tt.errorContains) {
+					t.Errorf("Expected error containing %q, got %q", tt.errorContains, err.Error())
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			// Verify output file exists and content
+			content, err := os.ReadFile(outputPath)
+			if err != nil {
+				t.Fatalf("Failed to read output file: %v", err)
+			}
+
+			// Count number of <document> tags to verify number of included files
+			docCount := strings.Count(string(content), "<document ")
+			if docCount != tt.expectedFiles {
+				t.Errorf("Expected %d files in output, got %d", tt.expectedFiles, docCount)
+			}
+		})
 	}
 }
