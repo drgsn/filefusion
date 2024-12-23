@@ -8,19 +8,48 @@ import (
 	"sync"
 )
 
-// FileProcessor handles file processing operations
+// FileResult represents the outcome of processing a single file.
+// It can contain either the processed content or an error, but not both.
+type FileResult struct {
+	Content FileContent // Processed file content and metadata
+	Error   error       // Error that occurred during processing, if any
+}
+
+// FileProcessor handles the concurrent processing of multiple files,
+// reading their contents and collecting metadata while respecting size limits
+// and other constraints specified in the options.
 type FileProcessor struct {
 	options *MixOptions
 }
 
-// NewFileProcessor creates a new FileProcessor instance
+// NewFileProcessor creates a new FileProcessor instance with the specified options.
+//
+// Parameters:
+//   - options: Configuration settings for file processing
+//
+// Returns:
+//   - A new FileProcessor instance
 func NewFileProcessor(options *MixOptions) *FileProcessor {
 	return &FileProcessor{options: options}
 }
 
-// ProcessFiles processes multiple files concurrently
+// ProcessFiles processes multiple files concurrently using a worker pool pattern.
+// It respects file size limits and handles errors gracefully, continuing to process
+// files even if some fail.
+//
+// The function implements a concurrent processing model where:
+// - Multiple worker goroutines process files simultaneously
+// - Results are collected in order of completion
+// - Errors are collected but don't stop the overall processing
+//
+// Parameters:
+//   - paths: Slice of file paths to process
+//
+// Returns:
+//   - []FileContent: Slice of successfully processed file contents
+//   - error: First error encountered during processing, if any
 func (p *FileProcessor) ProcessFiles(paths []string) ([]FileContent, error) {
-	numWorkers := min(len(paths), 10)
+	numWorkers := min(len(paths), 10) // Limit concurrent workers
 	results := make(chan FileResult, len(paths))
 	var wg sync.WaitGroup
 
@@ -43,7 +72,7 @@ func (p *FileProcessor) ProcessFiles(paths []string) ([]FileContent, error) {
 		}()
 	}
 
-	// Wait for all workers to finish
+	// Wait for all workers to finish and close results channel
 	go func() {
 		wg.Wait()
 		close(results)
@@ -72,7 +101,17 @@ func (p *FileProcessor) ProcessFiles(paths []string) ([]FileContent, error) {
 	return contents, firstError
 }
 
-// processFile handles processing of a single file
+// processFile handles the processing of a single file, including:
+// - Reading file content
+// - Collecting metadata
+// - Handling paths relative to the input directory
+// - Validating file size constraints
+//
+// Parameters:
+//   - path: Path to the file to process
+//
+// Returns:
+//   - FileResult containing either the processed content or an error
 func (p *FileProcessor) processFile(path string) FileResult {
 	// Get file info
 	info, err := os.Stat(path)
@@ -113,7 +152,7 @@ func (p *FileProcessor) processFile(path string) FileResult {
 		}
 	}
 
-	// Get the base directory from the input path
+	// Calculate relative path from input directory
 	baseDir := filepath.Clean(p.options.InputPath)
 	cleanPath := filepath.Clean(path)
 
@@ -128,6 +167,7 @@ func (p *FileProcessor) processFile(path string) FileResult {
 		relPath = strings.TrimPrefix(relPath, "/")
 	}
 
+	// Return successful result with file content and metadata
 	return FileResult{
 		Content: FileContent{
 			Path:      relPath,
@@ -139,16 +179,11 @@ func (p *FileProcessor) processFile(path string) FileResult {
 	}
 }
 
-// min returns the smaller of two integers
+// min returns the smaller of two integers.
+// This helper function is used to limit the number of concurrent workers.
 func min(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
-}
-
-// FileResult represents the result of processing a single file
-type FileResult struct {
-	Content FileContent
-	Error   error
 }

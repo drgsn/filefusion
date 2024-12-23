@@ -8,17 +8,37 @@ import (
 	"strings"
 )
 
-// FileFinder handles file discovery operations
+// FileFinder is responsible for discovering files that match specified patterns
+// while respecting exclusion rules. It handles complex pattern matching including
+// glob patterns and directory-specific exclusions.
 type FileFinder struct {
-	options *MixOptions
+	options *MixOptions // Configuration options for file discovery
 }
 
-// NewFileFinder creates a new FileFinder instance
+// NewFileFinder creates a new FileFinder instance with the specified options.
+//
+// Parameters:
+//   - options: Configuration settings for file discovery
+//
+// Returns:
+//   - A new FileFinder instance
 func NewFileFinder(options *MixOptions) *FileFinder {
 	return &FileFinder{options: options}
 }
 
-// FindFiles finds all files matching the configured patterns
+// FindFiles discovers all files in the input directory that match the configured patterns
+// while respecting exclusion rules. It uses filepath.WalkDir for efficient directory traversal
+// and implements sophisticated pattern matching for both inclusion and exclusion.
+//
+// The function handles:
+// - Multiple inclusion patterns (comma-separated)
+// - Multiple exclusion patterns (comma-separated)
+// - Special patterns like "**" for recursive matching
+// - .git directory exclusion
+//
+// Returns:
+//   - []string: Slice of matched file paths
+//   - error: Error if any occurs during file discovery
 func (f *FileFinder) FindFiles() ([]string, error) {
 	var matches []string
 
@@ -33,17 +53,20 @@ func (f *FileFinder) FindFiles() ([]string, error) {
 		}
 
 		if info.IsDir() {
+			// Skip .git directory entirely
 			if d.Name() == ".git" {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
+		// Get path relative to input directory for pattern matching
 		relPath, err := filepath.Rel(f.options.InputPath, path)
 		if err != nil {
-			relPath = path
+			relPath = path // Fallback to full path if relative path fails
 		}
 
+		// Check if file matches patterns
 		match, err := f.matchesPattern(relPath, filepath.Base(path))
 		if err != nil {
 			return err
@@ -67,9 +90,21 @@ func (f *FileFinder) FindFiles() ([]string, error) {
 	return matches, nil
 }
 
-// matchesPattern checks if a file matches inclusion/exclusion patterns
+// matchesPattern checks if a file matches the inclusion patterns while not matching
+// any exclusion patterns. It implements sophisticated pattern matching including:
+// - Glob pattern support
+// - Directory-specific exclusions using "**"
+// - Both filename and full path matching
+//
+// Parameters:
+//   - path: Full relative path to the file
+//   - filename: Base name of the file
+//
+// Returns:
+//   - bool: true if the file should be included, false otherwise
+//   - error: Error if pattern matching fails
 func (f *FileFinder) matchesPattern(path, filename string) (bool, error) {
-	// Check exclusions first
+	// Check exclusions first - if file matches any exclusion pattern, skip it
 	if f.options.Exclude != "" {
 		excludePatterns := strings.Split(f.options.Exclude, ",")
 		for _, pattern := range excludePatterns {
@@ -81,6 +116,7 @@ func (f *FileFinder) matchesPattern(path, filename string) (bool, error) {
 			pattern = filepath.FromSlash(pattern)
 			pathToCheck := filepath.FromSlash(path)
 
+			// Handle "**" pattern for recursive directory matching
 			if strings.Contains(pattern, "**") {
 				basePattern := strings.TrimSuffix(pattern, string(filepath.Separator)+"**")
 				basePattern = strings.TrimSuffix(basePattern, "**")
@@ -88,12 +124,14 @@ func (f *FileFinder) matchesPattern(path, filename string) (bool, error) {
 					return false, nil
 				}
 			} else if strings.Contains(pattern, string(filepath.Separator)) {
+				// Handle path-based exclusions
 				if matched, err := filepath.Match(pattern, pathToCheck); err != nil {
 					return false, fmt.Errorf("invalid exclusion pattern %q: %w", pattern, err)
 				} else if matched {
 					return false, nil
 				}
 			} else {
+				// Handle filename-only exclusions
 				if matched, err := filepath.Match(pattern, filename); err != nil {
 					return false, fmt.Errorf("invalid exclusion pattern %q: %w", pattern, err)
 				} else if matched {
@@ -103,7 +141,7 @@ func (f *FileFinder) matchesPattern(path, filename string) (bool, error) {
 		}
 	}
 
-	// Check inclusion patterns
+	// Check inclusion patterns - file must match at least one
 	patterns := strings.Split(f.options.Pattern, ",")
 	for _, pattern := range patterns {
 		pattern = strings.TrimSpace(pattern)
