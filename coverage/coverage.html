@@ -57,7 +57,7 @@
 				
 				<option value="file0">github.com/drgsn/filefusion/cmd/filefusion/main.go (88.5%)</option>
 				
-				<option value="file1">github.com/drgsn/filefusion/internal/core/mixer.go (85.3%)</option>
+				<option value="file1">github.com/drgsn/filefusion/internal/core/mixer.go (86.0%)</option>
 				
 				<option value="file2">github.com/drgsn/filefusion/internal/core/types.go (66.7%)</option>
 				
@@ -393,6 +393,7 @@ func formatSize(bytes int64) string <span class="cov8" title="1">{
 import (
         "encoding/json"
         "fmt"
+        "io/fs"
         "os"
         "path/filepath"
         "strings"
@@ -423,6 +424,13 @@ func NewMixer(options *MixOptions) *Mixer <span class="cov8" title="1">{
 
 // Mix processes and concatenates files
 func (m *Mixer) Mix() error <span class="cov8" title="1">{
+        // Resolve the input path in case it's a symlink
+        resolvedPath, err := filepath.EvalSymlinks(m.options.InputPath)
+        if err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("error resolving input path: %w", err)
+        }</span>
+        <span class="cov8" title="1">m.options.InputPath = resolvedPath
+
         // Find all matching files
         files, err := m.findFiles()
         if err != nil </span><span class="cov8" title="1">{
@@ -506,15 +514,25 @@ func (m *Mixer) matchesAnyPattern(path, filename string) (bool, error) <span cla
 func (m *Mixer) findFiles() ([]string, error) <span class="cov8" title="1">{
         var matches []string
 
-        err := filepath.Walk(m.options.InputPath, func(path string, info os.FileInfo, err error) error </span><span class="cov8" title="1">{
+        // Use filepath.WalkDir instead of filepath.Walk for better performance
+        err := filepath.WalkDir(m.options.InputPath, func(path string, d fs.DirEntry, err error) error </span><span class="cov8" title="1">{
                 if err != nil </span><span class="cov8" title="1">{
                         return fmt.Errorf("error accessing path %s: %w", path, err)
                 }</span>
 
-                // Skip directories themselves
-                <span class="cov8" title="1">if info.IsDir() </span><span class="cov8" title="1">{
-                        return nil
+                // Get file info to properly handle symlinks
+                <span class="cov8" title="1">info, err := os.Stat(path)
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("error getting file info for %s: %w", path, err)
                 }</span>
+
+                // Skip directories themselves (but still traverse into them)
+                <span class="cov8" title="1">if info.IsDir() </span><span class="cov8" title="1">{
+                        if d.Name() == ".git" </span><span class="cov0" title="0">{
+                                return filepath.SkipDir
+                        }</span>
+                        <span class="cov8" title="1">return nil</span>
+                }
 
                 // Get relative path for pattern matching
                 <span class="cov8" title="1">relPath, err := filepath.Rel(m.options.InputPath, path)
@@ -630,10 +648,19 @@ func (m *Mixer) processFile(path string) FileResult <span class="cov8" title="1"
                 }
         }</span>
 
-        // Get relative path from input directory
-        <span class="cov8" title="1">relPath, err := filepath.Rel(m.options.InputPath, path)
-        if err != nil </span><span class="cov0" title="0">{
-                relPath = path // Fallback to full path if relative path cannot be determined
+        // Get the base directory from the input path
+        <span class="cov8" title="1">baseDir := filepath.Clean(m.options.InputPath)
+        cleanPath := filepath.Clean(path)
+
+        // Convert both paths to slashes for consistent handling
+        baseDir = filepath.ToSlash(baseDir)
+        cleanPath = filepath.ToSlash(cleanPath)
+
+        relPath := cleanPath
+        if strings.HasPrefix(cleanPath, baseDir) </span><span class="cov8" title="1">{
+                relPath = cleanPath[len(baseDir):]
+                // Remove leading slash if present
+                relPath = strings.TrimPrefix(relPath, "/")
         }</span>
 
         <span class="cov8" title="1">return FileResult{

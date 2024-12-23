@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,6 +34,13 @@ func NewMixer(options *MixOptions) *Mixer {
 
 // Mix processes and concatenates files
 func (m *Mixer) Mix() error {
+	// Resolve the input path in case it's a symlink
+	resolvedPath, err := filepath.EvalSymlinks(m.options.InputPath)
+	if err != nil {
+		return fmt.Errorf("error resolving input path: %w", err)
+	}
+	m.options.InputPath = resolvedPath
+
 	// Find all matching files
 	files, err := m.findFiles()
 	if err != nil {
@@ -116,13 +124,23 @@ func (m *Mixer) matchesAnyPattern(path, filename string) (bool, error) {
 func (m *Mixer) findFiles() ([]string, error) {
 	var matches []string
 
-	err := filepath.Walk(m.options.InputPath, func(path string, info os.FileInfo, err error) error {
+	// Use filepath.WalkDir instead of filepath.Walk for better performance
+	err := filepath.WalkDir(m.options.InputPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("error accessing path %s: %w", path, err)
 		}
 
-		// Skip directories themselves
+		// Get file info to properly handle symlinks
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("error getting file info for %s: %w", path, err)
+		}
+
+		// Skip directories themselves (but still traverse into them)
 		if info.IsDir() {
+			if d.Name() == ".git" {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
@@ -240,10 +258,19 @@ func (m *Mixer) processFile(path string) FileResult {
 		}
 	}
 
-	// Get relative path from input directory
-	relPath, err := filepath.Rel(m.options.InputPath, path)
-	if err != nil {
-		relPath = path // Fallback to full path if relative path cannot be determined
+	// Get the base directory from the input path
+	baseDir := filepath.Clean(m.options.InputPath)
+	cleanPath := filepath.Clean(path)
+
+	// Convert both paths to slashes for consistent handling
+	baseDir = filepath.ToSlash(baseDir)
+	cleanPath = filepath.ToSlash(cleanPath)
+
+	relPath := cleanPath
+	if strings.HasPrefix(cleanPath, baseDir) {
+		relPath = cleanPath[len(baseDir):]
+		// Remove leading slash if present
+		relPath = strings.TrimPrefix(relPath, "/")
 	}
 
 	return FileResult{
