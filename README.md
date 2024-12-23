@@ -209,7 +209,7 @@ FileFusion provides detailed error messages and warnings:
 4. **Choose Output Format**:
    - Use XML for better readability
    - Use JSON for better compatibility with other tools
-   - Use YAML for configuration-heavy projects
+   - Use YAML for fun of it
 
 ## Contributing
 
@@ -217,39 +217,5 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Troubleshooting
-
-### Common Issues
-
-1. **No Files Found**
-   ```bash
-   # Check if files exist matching the pattern
-   filefusion . -p "*.go" --dry-run
-   ```
-
-2. **Permission Denied**
-   ```bash
-   # Run with appropriate permissions
-   sudo filefusion . -p "*.go" -o /path/to/output.xml
-   ```
-
-3. **Size Limit Exceeded**
-   ```bash
-   # Increase size limit or use more specific patterns
-   filefusion . -p "*.go" --max-size 50MB
-   ```
-
-
-
-## Performance Tips
-
-1. Use specific patterns to reduce file scanning time
-2. Exclude unnecessary directories to improve performance
-3. Set appropriate size limits to prevent memory issues
-4. Use concurrent processing for large directories
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+This project is licensed under the Mozilla Public License Version 2.0
+ - see the LICENSE file for details.
