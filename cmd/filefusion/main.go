@@ -11,19 +11,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// FileInfo represents basic information about a processed file.
+// It is used for reporting and validation purposes before the actual processing begins.
 type FileInfo struct {
-	Path string `json:"path"`
-	Size int64  `json:"size"`
+	Path string `json:"path"` // Relative path to the file
+	Size int64  `json:"size"` // File size in bytes
 }
 
+// Command-line flags
 var (
-	outputPath    string
-	pattern       string
-	exclude       string
-	maxFileSize   string
-	maxOutputSize string
+	outputPath    string // Path where the output file will be written
+	pattern       string // File patterns to include (comma-separated)
+	exclude       string // Patterns to exclude (comma-separated)
+	maxFileSize   string // Maximum size limit for individual files
+	maxOutputSize string // Maximum size limit for the output file
 )
 
+// rootCmd represents the base command when called without any subcommands.
+// It configures the CLI interface and defines the main program behavior.
 var rootCmd = &cobra.Command{
 	Use:   "filefusion [paths...]",
 	Short: "Filefusion - File concatenation tool optimized for LLM usage",
@@ -33,6 +38,8 @@ Complete documentation is available at https://github.com/drgsn/filefusion`,
 	RunE: runMix,
 }
 
+// init initializes the command-line flags with their default values.
+// This function is called automatically by Go during package initialization.
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&outputPath, "output", "o", "", "output file path (if not specified, generates files based on input paths)")
 	rootCmd.PersistentFlags().StringVarP(&pattern, "pattern", "p", "*.go,*.json,*.yaml,*.yml", "comma-separated file patterns (e.g., '*.go,*.json')")
@@ -41,6 +48,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&maxOutputSize, "max-output-size", "50MB", "maximum size for the output file")
 }
 
+// main is the entry point of the application.
+// It executes the root command and handles any errors that occur.
 func main() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -48,6 +57,15 @@ func main() {
 	}
 }
 
+// deriveOutputPath generates an output file path based on the input path.
+// For directories, it uses the directory name with .xml extension.
+// For files, it appends .xml to the existing filename.
+//
+// Parameters:
+//   - inputPath: Path to the input file or directory
+//
+// Returns:
+//   - A derived output path with .xml extension
 func deriveOutputPath(inputPath string) string {
 	// Get the last component of the path
 	base := filepath.Base(strings.TrimSuffix(inputPath, string(os.PathSeparator)))
@@ -61,7 +79,19 @@ func deriveOutputPath(inputPath string) string {
 	return base + ".xml"
 }
 
+// runMix implements the main program logic when executing the root command.
+// It processes command-line arguments, validates inputs, and orchestrates
+// the file mixing process.
+//
+// Parameters:
+//   - cmd: The Cobra command being run
+//   - args: Command-line arguments after the command name
+//
+// Returns:
+//   - error: nil if successful, otherwise an error describing what went wrong
 func runMix(cmd *cobra.Command, args []string) error {
+
+	// Use current directory if no paths specified
 	if len(args) == 0 {
 		currentDir, err := os.Getwd()
 		if err != nil {
@@ -134,12 +164,12 @@ func runMix(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("error processing %s: %w", inputPath, err)
 		}
 
-		// Print summary before processing
+		// Print summary information
 		fmt.Printf("Processing %s:\n", inputPath)
 		fmt.Printf("Found %d files matching pattern\n", len(files))
 		fmt.Printf("Total size: %s\n", formatSize(totalSize))
 
-		// Check if total size exceeds maximum
+		// Validate total size against limit
 		if totalSize > maxOutputSizeBytes {
 			fmt.Printf("\nError: Total output size (%s) exceeds maximum allowed size (%s)\n",
 				formatSize(totalSize), formatSize(maxOutputSizeBytes))
