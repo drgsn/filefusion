@@ -169,18 +169,18 @@ func TestRootCommandFlags(t *testing.T) {
 		},
 		{
 			name:          "negative max size",
-			args:          []string{"--max-size", "-5MB"},
+			args:          []string{"--max-size", "-5MB", "--pattern", "*.go"},
 			expectedError: "invalid max-size value: size must be a positive number",
-		},
-		{
-			name:          "invalid output extension",
-			args:          []string{"--output", "output.txt"},
-			expectedError: "output file must have .xml, .json, .yaml, or .yml extension",
 		},
 		{
 			name:          "empty pattern",
 			args:          []string{"--pattern", ""},
 			expectedError: "pattern cannot be empty",
+		},
+		{
+			name:          "invalid output extension",
+			args:          []string{"--output", "output.txt", "--pattern", "*.go", "--max-size", "10MB"},
+			expectedError: "invalid output file extension: must be .xml, .json, .yaml, or .yml",
 		},
 	}
 
@@ -194,8 +194,8 @@ func TestRootCommandFlags(t *testing.T) {
 				return
 			}
 
-			if !strings.Contains(err.Error(), tt.expectedError) {
-				t.Errorf("Expected error containing %q, got %q", tt.expectedError, err.Error())
+			if err.Error() != tt.expectedError {
+				t.Errorf("Expected error %q, got %q", tt.expectedError, err.Error())
 			}
 		})
 	}

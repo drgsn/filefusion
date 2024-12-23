@@ -60,18 +60,26 @@ func runMix(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("pattern cannot be empty")
 	}
 
-	// Validate output path
-	ext := strings.ToLower(filepath.Ext(outputPath))
-	if ext != ".xml" && ext != ".json" && ext != ".yaml" && ext != ".yml" {
-		return fmt.Errorf("output file must have .xml, .json, .yaml, or .yml extension")
-	}
-	jsonOutput = ext == ".json"
-	yamlOutput := ext == ".yaml" || ext == ".yml"
-
-	// Parse max file size
+	// Parse max file size next
 	maxBytes, err := parseSize(maxFileSize)
 	if err != nil {
 		return fmt.Errorf("invalid max-size value: %w", err)
+	}
+
+	// Validate output path and determine output type
+	var outputType core.OutputType
+	if outputPath != "" {
+		ext := strings.ToLower(filepath.Ext(outputPath))
+		switch ext {
+		case ".json":
+			outputType = core.OutputTypeJSON
+		case ".yaml", ".yml":
+			outputType = core.OutputTypeYAML
+		case ".xml":
+			outputType = core.OutputTypeXML
+		default:
+			return fmt.Errorf("invalid output file extension: must be .xml, .json, .yaml, or .yml")
+		}
 	}
 
 	// Create mixer options
@@ -81,8 +89,7 @@ func runMix(cmd *cobra.Command, args []string) error {
 		Pattern:     pattern,
 		Exclude:     exclude,
 		MaxFileSize: maxBytes,
-		JsonOutput:  jsonOutput,
-		YamlOutput:  yamlOutput,
+		OutputType:  outputType,
 	}
 
 	// First, scan for files and check total size

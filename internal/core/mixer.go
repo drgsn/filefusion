@@ -292,46 +292,49 @@ func (m *Mixer) generateLLMOutput(contents []FileContent) error {
 		}
 	}
 
-	if m.options.JsonOutput {
+	switch m.options.OutputType {
+	case OutputTypeJSON:
 		encoder := json.NewEncoder(file)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(output); err != nil {
 			return &MixError{Message: fmt.Sprintf("error encoding JSON: %v", err)}
 		}
 		return nil
-	}
 
-	if m.options.YamlOutput {
+	case OutputTypeYAML:
 		encoder := yaml.NewEncoder(file)
-		encoder.SetIndent(2) // Set YAML indentation to 2 spaces
+		encoder.SetIndent(2)
 		if err := encoder.Encode(output); err != nil {
 			return &MixError{Message: fmt.Sprintf("error encoding YAML: %v", err)}
 		}
 		return nil
-	}
 
-	// XML output
-	const xmlTemplate = `<documents>{{range $index, $file := .}}
+	case OutputTypeXML:
+		// XML output
+		const xmlTemplate = `<documents>{{range $index, $file := .}}
 <document index="{{add $index 1}}">
 <source>{{.Path}}</source>
 <document_content>{{.Content}}</document_content>
 </document>{{end}}
 </documents>`
 
-	// Create template with custom functions
-	t, err := template.New("llm").Funcs(template.FuncMap{
-		"add": func(a, b int) int { return a + b },
-	}).Parse(xmlTemplate)
-	if err != nil {
-		return &MixError{Message: fmt.Sprintf("error parsing template: %v", err)}
-	}
+		// Create template with custom functions
+		t, err := template.New("llm").Funcs(template.FuncMap{
+			"add": func(a, b int) int { return a + b },
+		}).Parse(xmlTemplate)
+		if err != nil {
+			return &MixError{Message: fmt.Sprintf("error parsing template: %v", err)}
+		}
 
-	// Execute template
-	if err := t.Execute(file, contents); err != nil {
-		return &MixError{Message: fmt.Sprintf("error executing template: %v", err)}
-	}
+		// Execute template
+		if err := t.Execute(file, contents); err != nil {
+			return &MixError{Message: fmt.Sprintf("error executing template: %v", err)}
+		}
+		return nil
 
-	return nil
+	default:
+		return &MixError{Message: fmt.Sprintf("unsupported output type: %s", m.options.OutputType)}
+	}
 }
 
 // min returns the smaller of two integers

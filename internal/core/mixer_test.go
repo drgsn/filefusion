@@ -365,12 +365,12 @@ func TestOutputFormats(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		outputPath string
+		outputType OutputType
 		validate   func(t *testing.T, output []byte)
 	}{
 		{
 			name:       "XML output",
-			outputPath: "output.xml",
+			outputType: OutputTypeXML,
 			validate: func(t *testing.T, output []byte) {
 				if !bytes.Contains(output, []byte("<documents>")) {
 					t.Error("Expected XML output to contain <documents> tag")
@@ -388,7 +388,7 @@ func TestOutputFormats(t *testing.T) {
 		},
 		{
 			name:       "JSON output",
-			outputPath: "output.json",
+			outputType: OutputTypeJSON,
 			validate: func(t *testing.T, output []byte) {
 				var result struct {
 					Documents []struct {
@@ -421,7 +421,7 @@ func TestOutputFormats(t *testing.T) {
 		},
 		{
 			name:       "YAML output",
-			outputPath: "output.yaml",
+			outputType: OutputTypeYAML,
 			validate: func(t *testing.T, output []byte) {
 				var result struct {
 					Documents []struct {
@@ -456,14 +456,13 @@ func TestOutputFormats(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			outputPath := filepath.Join(tmpDir, tt.outputPath)
+			outputPath := filepath.Join(tmpDir, fmt.Sprintf("output%s", tt.outputType))
 			mixer := NewMixer(&MixOptions{
 				InputPath:   tmpDir,
 				OutputPath:  outputPath,
 				Pattern:     "*.txt",
 				MaxFileSize: 1024 * 1024,
-				JsonOutput:  strings.HasSuffix(tt.outputPath, ".json"),
-				YamlOutput:  strings.HasSuffix(tt.outputPath, ".yaml"),
+				OutputType:  tt.outputType,
 			})
 
 			if err := mixer.Mix(); err != nil {

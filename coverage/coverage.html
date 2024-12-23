@@ -55,9 +55,9 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/drgsn/filefusion/cmd/filefusion/main.go (73.6%)</option>
+				<option value="file0">github.com/drgsn/filefusion/cmd/filefusion/main.go (71.7%)</option>
 				
-				<option value="file1">github.com/drgsn/filefusion/internal/core/mixer.go (86.0%)</option>
+				<option value="file1">github.com/drgsn/filefusion/internal/core/mixer.go (85.3%)</option>
 				
 				<option value="file2">github.com/drgsn/filefusion/internal/core/types.go (66.7%)</option>
 				
@@ -135,19 +135,27 @@ func runMix(cmd *cobra.Command, args []string) error <span class="cov8" title="1
                 return fmt.Errorf("pattern cannot be empty")
         }</span>
 
-        // Validate output path
-        <span class="cov8" title="1">ext := strings.ToLower(filepath.Ext(outputPath))
-        if ext != ".xml" &amp;&amp; ext != ".json" &amp;&amp; ext != ".yaml" &amp;&amp; ext != ".yml" </span><span class="cov8" title="1">{
-                return fmt.Errorf("output file must have .xml, .json, .yaml, or .yml extension")
-        }</span>
-        <span class="cov8" title="1">jsonOutput = ext == ".json"
-        yamlOutput := ext == ".yaml" || ext == ".yml"
-
-        // Parse max file size
-        maxBytes, err := parseSize(maxFileSize)
+        // Parse max file size next
+        <span class="cov8" title="1">maxBytes, err := parseSize(maxFileSize)
         if err != nil </span><span class="cov8" title="1">{
                 return fmt.Errorf("invalid max-size value: %w", err)
         }</span>
+
+        // Validate output path and determine output type
+        <span class="cov8" title="1">var outputType core.OutputType
+        if outputPath != "" </span><span class="cov8" title="1">{
+                ext := strings.ToLower(filepath.Ext(outputPath))
+                switch ext </span>{
+                case ".json":<span class="cov0" title="0">
+                        outputType = core.OutputTypeJSON</span>
+                case ".yaml", ".yml":<span class="cov0" title="0">
+                        outputType = core.OutputTypeYAML</span>
+                case ".xml":<span class="cov0" title="0">
+                        outputType = core.OutputTypeXML</span>
+                default:<span class="cov8" title="1">
+                        return fmt.Errorf("invalid output file extension: must be .xml, .json, .yaml, or .yml")</span>
+                }
+        }
 
         // Create mixer options
         <span class="cov0" title="0">options := &amp;core.MixOptions{
@@ -156,8 +164,7 @@ func runMix(cmd *cobra.Command, args []string) error <span class="cov8" title="1
                 Pattern:     pattern,
                 Exclude:     exclude,
                 MaxFileSize: maxBytes,
-                JsonOutput:  jsonOutput,
-                YamlOutput:  yamlOutput,
+                OutputType:  outputType,
         }
 
         // First, scan for files and check total size
@@ -636,46 +643,49 @@ func (m *Mixer) generateLLMOutput(contents []FileContent) error <span class="cov
                 }
         }</span>
 
-        <span class="cov8" title="1">if m.options.JsonOutput </span><span class="cov8" title="1">{
+        <span class="cov8" title="1">switch m.options.OutputType </span>{
+        case OutputTypeJSON:<span class="cov8" title="1">
                 encoder := json.NewEncoder(file)
                 encoder.SetIndent("", "  ")
                 if err := encoder.Encode(output); err != nil </span><span class="cov0" title="0">{
                         return &amp;MixError{Message: fmt.Sprintf("error encoding JSON: %v", err)}
                 }</span>
                 <span class="cov8" title="1">return nil</span>
-        }
 
-        <span class="cov8" title="1">if m.options.YamlOutput </span><span class="cov8" title="1">{
+        case OutputTypeYAML:<span class="cov8" title="1">
                 encoder := yaml.NewEncoder(file)
-                encoder.SetIndent(2) // Set YAML indentation to 2 spaces
+                encoder.SetIndent(2)
                 if err := encoder.Encode(output); err != nil </span><span class="cov0" title="0">{
                         return &amp;MixError{Message: fmt.Sprintf("error encoding YAML: %v", err)}
                 }</span>
                 <span class="cov8" title="1">return nil</span>
-        }
 
-        // XML output
-        <span class="cov8" title="1">const xmlTemplate = `&lt;documents&gt;{{range $index, $file := .}}
+        case OutputTypeXML:<span class="cov8" title="1">
+                // XML output
+                const xmlTemplate = `&lt;documents&gt;{{range $index, $file := .}}
 &lt;document index="{{add $index 1}}"&gt;
 &lt;source&gt;{{.Path}}&lt;/source&gt;
 &lt;document_content&gt;{{.Content}}&lt;/document_content&gt;
 &lt;/document&gt;{{end}}
 &lt;/documents&gt;`
 
-        // Create template with custom functions
-        t, err := template.New("llm").Funcs(template.FuncMap{
-                "add": func(a, b int) int </span><span class="cov8" title="1">{ return a + b }</span>,
-        }).Parse(xmlTemplate)
-        <span class="cov8" title="1">if err != nil </span><span class="cov0" title="0">{
-                return &amp;MixError{Message: fmt.Sprintf("error parsing template: %v", err)}
-        }</span>
+                // Create template with custom functions
+                t, err := template.New("llm").Funcs(template.FuncMap{
+                        "add": func(a, b int) int </span><span class="cov8" title="1">{ return a + b }</span>,
+                }).Parse(xmlTemplate)
+                <span class="cov8" title="1">if err != nil </span><span class="cov0" title="0">{
+                        return &amp;MixError{Message: fmt.Sprintf("error parsing template: %v", err)}
+                }</span>
 
-        // Execute template
-        <span class="cov8" title="1">if err := t.Execute(file, contents); err != nil </span><span class="cov0" title="0">{
-                return &amp;MixError{Message: fmt.Sprintf("error executing template: %v", err)}
-        }</span>
+                // Execute template
+                <span class="cov8" title="1">if err := t.Execute(file, contents); err != nil </span><span class="cov0" title="0">{
+                        return &amp;MixError{Message: fmt.Sprintf("error executing template: %v", err)}
+                }</span>
+                <span class="cov8" title="1">return nil</span>
 
-        <span class="cov8" title="1">return nil</span>
+        default:<span class="cov0" title="0">
+                return &amp;MixError{Message: fmt.Sprintf("unsupported output type: %s", m.options.OutputType)}</span>
+        }
 }
 
 // min returns the smaller of two integers
@@ -691,37 +701,46 @@ func min(a, b int) int <span class="cov8" title="1">{
 
 // FileContent represents a file's content and metadata
 type FileContent struct {
-    Path      string `json:"path"`      // Path to the file (relative to input directory)
-    Name      string `json:"name"`      // Name of the file
-    Content   string `json:"content"`   // Content of the file
-    Extension string `json:"extension"` // File extension without dot
-    Size      int64  `json:"size"`     // File size in bytes
+        Path      string `json:"path"`      // Path to the file (relative to input directory)
+        Name      string `json:"name"`      // Name of the file
+        Content   string `json:"content"`   // Content of the file
+        Extension string `json:"extension"` // File extension without dot
+        Size      int64  `json:"size"`      // File size in bytes
 }
+
+// OutputType represents the type of output format
+type OutputType string
+
+const (
+        OutputTypeXML  OutputType = "XML"
+        OutputTypeJSON OutputType = "JSON"
+        OutputTypeYAML OutputType = "YAML"
+)
 
 // MixOptions represents configuration options for the mixer
 type MixOptions struct {
-    InputPath   string // Directory to process
-    OutputPath  string // Output file path
-    Pattern     string // Comma-separated file matching patterns
-    Exclude     string   // Comma-separated exclusion patterns
-    MaxFileSize int64  // Maximum total size in bytes
-    JsonOutput  bool   // Whether to output JSON
-    YamlOutput  bool   // Whether to output YAML
+        InputPath   string     // Directory to process
+        OutputPath  string     // Output file path
+        Pattern     string     // Comma-separated file matching patterns
+        Exclude     string     // Comma-separated exclusion patterns
+        MaxFileSize int64      // Maximum total size in bytes
+        OutputType  OutputType // Type of output format
 }
 
 // MixError represents an error that occurred during mixing
 type MixError struct {
-    File    string // File where error occurred
-    Message string // Error message
+        File    string // File where error occurred
+        Message string // Error message
 }
 
 // Error implements the error interface for MixError
 func (e *MixError) Error() string <span class="cov8" title="1">{
-    if e.File != "" </span><span class="cov8" title="1">{
-        return "file " + e.File + ": " + e.Message
-    }</span>
-    <span class="cov0" title="0">return e.Message</span>
-}</pre>
+        if e.File != "" </span><span class="cov8" title="1">{
+                return "file " + e.File + ": " + e.Message
+        }</span>
+        <span class="cov0" title="0">return e.Message</span>
+}
+</pre>
 		
 		</div>
 	</body>
