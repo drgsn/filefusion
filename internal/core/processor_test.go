@@ -110,25 +110,73 @@ func TestFileProcessor(t *testing.T) {
 }
 
 func TestFileProcessorErrors(t *testing.T) {
+	// Create temporary test directory
 	tmpDir, err := os.MkdirTemp("", "filefusion-error-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create a directory that looks like a file
-	invalidPath := filepath.Join(tmpDir, "not-a-file.txt")
-	if err := os.Mkdir(invalidPath, 0755); err != nil {
-		t.Fatalf("Failed to create test directory: %v", err)
+	// Create a nested directory structure
+	nestedDir := filepath.Join(tmpDir, "nested")
+	if err := os.MkdirAll(nestedDir, 0755); err != nil {
+		t.Fatalf("Failed to create nested directory: %v", err)
 	}
 
+	// Create a test file in the nested directory
+	testFile := filepath.Join(nestedDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	// Create processor with minimal size to force errors
 	processor := NewFileProcessor(&MixOptions{
 		InputPath:   tmpDir,
-		MaxFileSize: 1024,
+		MaxFileSize: 1, // 1 byte max size to force size-related errors
 	})
 
-	_, err = processor.ProcessFiles([]string{invalidPath})
-	if err == nil {
-		t.Error("Expected error when processing directory as file")
+	tests := []struct {
+		name        string
+		path        string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "process directory as file",
+			path:        nestedDir,
+			wantErr:     true,
+			errContains: "is a directory",
+		},
+		{
+			name:        "process non-existent file",
+			path:        filepath.Join(tmpDir, "nonexistent.txt"),
+			wantErr:     true,
+			errContains: "no such file",
+		},
+		{
+			name:    "process file exceeding size limit",
+			path:    testFile,
+			wantErr: false, // This should not error as we handle large files gracefully
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := processor.processFile(tt.path)
+
+			if tt.wantErr {
+				if result.Error == nil {
+					t.Errorf("Expected error for %s", tt.name)
+					return
+				}
+				if tt.errContains != "" && !strings.Contains(strings.ToLower(result.Error.Error()), strings.ToLower(tt.errContains)) {
+					t.Errorf("Expected error containing %q, got %q", tt.errContains, result.Error)
+				}
+			} else {
+				if result.Error != nil {
+					t.Errorf("Unexpected error: %v", result.Error)
+				}
+			}
+		})
 	}
 }

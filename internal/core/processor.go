@@ -84,8 +84,20 @@ func (p *FileProcessor) processFile(path string) FileResult {
 		}
 	}
 
+	// Check if it's a directory
+	if info.IsDir() {
+		return FileResult{
+			Error: &MixError{
+				File:    path,
+				Message: "is a directory",
+			},
+		}
+	}
+
 	// Skip if file is too large
 	if info.Size() > p.options.MaxFileSize {
+		fmt.Fprintf(os.Stderr, "Warning: Skipping %s (size %d bytes exceeds limit %d bytes)\n",
+			path, info.Size(), p.options.MaxFileSize)
 		return FileResult{} // Return empty result for skipped files
 	}
 
@@ -100,16 +112,18 @@ func (p *FileProcessor) processFile(path string) FileResult {
 		}
 	}
 
-	// Get relative path from input directory
+	// Get the base directory from the input path
 	baseDir := filepath.Clean(p.options.InputPath)
 	cleanPath := filepath.Clean(path)
 
+	// Convert both paths to slashes for consistent handling
 	baseDir = filepath.ToSlash(baseDir)
 	cleanPath = filepath.ToSlash(cleanPath)
 
 	relPath := cleanPath
 	if strings.HasPrefix(cleanPath, baseDir) {
 		relPath = cleanPath[len(baseDir):]
+		// Remove leading slash if present
 		relPath = strings.TrimPrefix(relPath, "/")
 	}
 
