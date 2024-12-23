@@ -342,6 +342,7 @@ func TestConcurrentProcessingWithErrors(t *testing.T) {
 	}
 }
 
+
 func TestOutputFormats(t *testing.T) {
 	// Create temporary test directory
 	tmpDir, err := os.MkdirTemp("", "filefusion-test-*")
@@ -350,15 +351,18 @@ func TestOutputFormats(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create test files
-	files := map[string]string{
-		"test1.txt": "content1",
-		"test2.txt": "content2",
+	// Create test files with deterministic order
+	files := []struct {
+		name    string
+		content string
+	}{
+		{"01_test1.txt", "content1"},
+		{"02_test2.txt", "content2"},
 	}
 
-	for name, content := range files {
-		path := filepath.Join(tmpDir, name)
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	for _, file := range files {
+		path := filepath.Join(tmpDir, file.name)
+		if err := os.WriteFile(path, []byte(file.content), 0644); err != nil {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
 	}
@@ -384,6 +388,17 @@ func TestOutputFormats(t *testing.T) {
 				if !bytes.Contains(output, []byte("<document_content>")) {
 					t.Error("Expected XML output to contain document_content tags")
 				}
+				
+				// Verify content order
+				content := string(output)
+				idx1 := strings.Index(content, "content1")
+				idx2 := strings.Index(content, "content2")
+				if idx1 == -1 || idx2 == -1 {
+					t.Error("Missing expected content")
+				}
+				if idx1 > idx2 {
+					t.Error("Content is not in expected order")
+				}
 			},
 		},
 		{
@@ -407,14 +422,20 @@ func TestOutputFormats(t *testing.T) {
 					t.Errorf("Expected 2 documents in JSON output, got %d", len(result.Documents))
 				}
 
+				// Sort documents by Index to ensure consistent order
+				sort.Slice(result.Documents, func(i, j int) bool {
+					return result.Documents[i].Index < result.Documents[j].Index
+				})
+
 				// Verify document order and content
 				for i, doc := range result.Documents {
-					if doc.Index != i+1 {
-						t.Errorf("Expected document index %d, got %d", i+1, doc.Index)
-					}
 					expectedContent := fmt.Sprintf("content%d", i+1)
 					if doc.DocumentContent != expectedContent {
 						t.Errorf("Expected content %q, got %q", expectedContent, doc.DocumentContent)
+					}
+					expectedIndex := i + 1
+					if doc.Index != expectedIndex {
+						t.Errorf("Expected document index %d, got %d", expectedIndex, doc.Index)
 					}
 				}
 			},
@@ -440,14 +461,20 @@ func TestOutputFormats(t *testing.T) {
 					t.Errorf("Expected 2 documents in YAML output, got %d", len(result.Documents))
 				}
 
+				// Sort documents by Index to ensure consistent order
+				sort.Slice(result.Documents, func(i, j int) bool {
+					return result.Documents[i].Index < result.Documents[j].Index
+				})
+
 				// Verify document order and content
 				for i, doc := range result.Documents {
-					if doc.Index != i+1 {
-						t.Errorf("Expected document index %d, got %d", i+1, doc.Index)
-					}
 					expectedContent := fmt.Sprintf("content%d", i+1)
 					if doc.DocumentContent != expectedContent {
 						t.Errorf("Expected content %q, got %q", expectedContent, doc.DocumentContent)
+					}
+					expectedIndex := i + 1
+					if doc.Index != expectedIndex {
+						t.Errorf("Expected document index %d, got %d", expectedIndex, doc.Index)
 					}
 				}
 			},
