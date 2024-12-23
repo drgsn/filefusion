@@ -21,7 +21,6 @@ var (
 	pattern     string
 	exclude     string
 	maxFileSize string
-	jsonOutput  bool
 )
 
 var rootCmd = &cobra.Command{

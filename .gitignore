@@ -40,3 +40,4 @@ __debug_bin
 # Build directory
 build/
 dist/
+coverage/
