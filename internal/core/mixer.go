@@ -311,7 +311,8 @@ func (m *Mixer) generateLLMOutput(contents []FileContent) error {
 
 	case OutputTypeXML:
 		// XML output
-		const xmlTemplate = `<documents>{{range $index, $file := .}}
+		const xmlTemplate = `<?xml version="1.0" encoding="UTF-8"?>
+<documents>{{range $index, $file := .}}
 <document index="{{add $index 1}}">
 <source>{{.Path}}</source>
 <document_content>{{.Content}}</document_content>

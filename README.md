@@ -1,168 +1,178 @@
 # FileFusion
 
-[![Test Coverage](https://codecov.io/gh/drgsn/filefusion/branch/main/graph/badge.svg)](https://codecov.io/gh/drgsn/filefusion)
+FileFusion is a powerful command-line tool designed to concatenate and process files in a format optimized for Large Language Models (LLMs). It automatically preserves file metadata and structures the output in XML, JSON, or YAML format.
 
-FileFusion is a powerful file concatenation tool designed specifically for Large Language Model (LLM) applications.
-It combines multiple files into a single structured output file while preserving metadata
-and maintaining a format that's optimal for LLM processing.
+[![Run tests and upload coverage](https://github.com/drgsn/filefusion/actions/workflows/test.yml/badge.svg)](https://github.com/drgsn/filefusion/actions/workflows/test.yml)
+[![Release](https://github.com/drgsn/filefusion/actions/workflows/release.yml/badge.svg)](https://github.com/drgsn/filefusion/actions/workflows/release.yml)
 
 ## Features
 
-- Concatenates multiple files into XML, JSON, or YAML formats
-- Supports flexible file pattern matching
-- Excludes unwanted files or directories
-- Enforces file size limits
-- Preserves file metadata and structure
-- Handles recursive directory scanning
-- Platform-independent path handling
+- Multiple file pattern matching with support for exclusions
+- Concurrent file processing for improved performance
+- Size limit enforcement for individual files
+- Support for XML, JSON, and YAML output formats
+- Directory traversal with customizable pattern matching
+- Automatic handling of hidden directories and files
+- Progress reporting and error handling
 
 ## Installation
 
+### Using Go Install
+
+If you have Go installed, you can install FileFusion directly:
+
 ```bash
-go install github.com/drgsn/filefusion@latest
+go install github.com/drgsn/filefusion/cmd/filefusion@latest
 ```
 
-## Usage
+### From Releases
+
+Download the latest binary for your platform from the [releases page](https://github.com/drgsn/filefusion/releases).
+
+## Basic Usage
 
 ```bash
-filefusion [flags]
+filefusion [flags] [paths...]
 ```
 
 ### Flags
 
-- `-i, --input`: Input directory path (default: current directory)
-- `-o, --output`: Output file path (default: output.xml)
-- `-p, --pattern`: Comma-separated file patterns (default: "_.go,_.json,_.yaml,_.yml")
-- `-e, --exclude`: Comma-separated patterns to exclude
-- `--max-size`: Maximum size of the output file (default: 10MB)
+- `-o, --output`: Output file path (optional)
+- `-p, --pattern`: File patterns to match (comma-separated)
+- `-e, --exclude`: Patterns to exclude (comma-separated)
+- `--max-size`: Maximum file size (e.g., "10MB")
 
 ## Examples
 
-### Basic Usage
+### 1. Basic File Processing
 
-1. Process all Go files in the current directory:
-
-```bash
-filefusion -p "*.go"
-```
-
-2. Process multiple file types:
+Process all Go and JSON files in the current directory:
 
 ```bash
-filefusion -p "*.go,*.js,*.py" -o output.xml
+filefusion . -p "*.go,*.json" -o output.xml
 ```
 
-3. Process files from a specific directory:
+### 2. Multiple Directories
+
+Process multiple directories and generate separate outputs:
 
 ```bash
-filefusion -i /path/to/project -p "*.go"
+filefusion ./service1 ./service2 ./service3 -p "*.go,*.yaml"
 ```
 
-### Output Formats
+This will create:
+- service1.xml
+- service2.xml
+- service3.xml
 
-1. Generate XML output (default):
+### 3. Exclude Patterns
+
+Process files while excluding specific patterns:
 
 ```bash
-filefusion -p "*.go" -o output.xml
+filefusion . -p "*.go" -e "vendor/**,**/*_test.go" -o output.xml
 ```
 
-2. Generate JSON output:
+### 4. Size Limits
+
+Set maximum file size limit:
 
 ```bash
-filefusion -p "*.go" -o output.json
+filefusion . -p "*.go" --max-size 5MB -o output.xml
 ```
 
-3. Generate YAML output:
+### 5. Different Output Formats
 
+#### XML Output (Default)
 ```bash
-filefusion -p "*.go" -o output.yaml
+filefusion . -p "*.go" -o output.xml
 ```
 
-### File Size Limits
-
-1. Set a 5MB limit for the output file:
-
-```bash
-filefusion -p "*.go" --max-size 5MB
-```
-
-2. Use different size units:
-
-```bash
-filefusion -p "*.go" --max-size 500KB
-filefusion -p "*.go" --max-size 1GB
-```
-
-### Exclusion Patterns
-
-1. Exclude specific directories:
-
-```bash
-filefusion -p "*.go" -e "vendor/**,build/**"
-```
-
-2. Exclude specific files:
-
-```bash
-filefusion -p "*.go" -e "*_test.go"
-```
-
-3. Complex exclusion patterns:
-
-```bash
-filefusion -p "*.go,*.js" -e "vendor/**,**/*_test.go,**/node_modules/**"
-```
-
-## Output Format Examples
-
-### XML Output
-
+Example output:
 ```xml
 <documents>
   <document index="1">
     <source>main.go</source>
-    <document_content>package main
-
-func main() {
-    // ...
-}</document_content>
+    <document_content>package main...</document_content>
   </document>
-  <!-- Additional documents... -->
 </documents>
 ```
 
-### JSON Output
+#### JSON Output
+```bash
+filefusion . -p "*.go" -o output.json
+```
 
+Example output:
 ```json
 {
   "documents": [
     {
       "index": 1,
       "source": "main.go",
-      "document_content": "package main\n\nfunc main() {\n    // ...\n}"
+      "document_content": "package main..."
     }
   ]
 }
 ```
 
-### YAML Output
+#### YAML Output
+```bash
+filefusion . -p "*.go" -o output.yaml
+```
 
+Example output:
 ```yaml
 documents:
   - index: 1
     source: main.go
     document_content: |
-      package main
-
-      func main() {
-          // ...
-      }
+      package main...
 ```
 
-## Size Units
+### 6. Complex Pattern Matching
 
-The `--max-size` flag supports the following units:
+Process specific file types while excluding certain directories:
 
+```bash
+filefusion . \
+  -p "*.go,*.proto,*.yaml" \
+  -e "vendor/**,**/generated/**,**/*_test.go" \
+  --max-size 2MB \
+  -o project.xml
+```
+
+### 7. Processing Large Projects
+
+For large projects with many files:
+
+```bash
+filefusion . \
+  -p "*.go,*.js,*.ts,*.proto" \
+  -e "node_modules/**,vendor/**,**/dist/**" \
+  --max-size 5MB \
+  -o project.xml
+```
+
+## Pattern Matching Rules
+
+- Use `*` to match any sequence of characters in a filename
+- Use `**` in exclude patterns to match any number of subdirectories
+- Patterns are case-sensitive by default
+- Multiple patterns can be separated by commas
+- Exclude patterns take precedence over include patterns
+
+### Pattern Examples
+
+- `*.go`: All Go files
+- `*.{go,proto}`: All Go and Proto files
+- `src/**/*.js`: All JavaScript files under src directory and its subdirectories
+- `!vendor/**`: Exclude all files in vendor directory and its subdirectories
+- `**/*_test.go`: Exclude all Go test files in any directory
+
+## Size Specifications
+
+File size limits can be specified using the following units:
 - B (Bytes)
 - KB (Kilobytes)
 - MB (Megabytes)
@@ -170,31 +180,75 @@ The `--max-size` flag supports the following units:
 - TB (Terabytes)
 
 Examples:
-
-- `--max-size 500B`
-- `--max-size 1KB`
+- `--max-size 500KB`
 - `--max-size 10MB`
 - `--max-size 1GB`
 
-## File Pattern Syntax
-
-FileFusion uses standard glob patterns:
-
-- `*`: Matches any sequence of characters except path separators
-- `**`: Matches any sequence of characters including path separators (for directory exclusions)
-- `?`: Matches any single character
-- `[abc]`: Matches one character given in the bracket
-- `[a-z]`: Matches one character from the range given in the bracket
-
 ## Error Handling
 
-FileFusion provides clear error messages for common issues:
+FileFusion provides detailed error messages and warnings:
+- Files exceeding size limits are skipped with warnings
+- Invalid patterns generate appropriate error messages
+- Permission issues are reported with specific details
+- Missing directories or files are properly handled
 
-- File size exceeding limits
-- Invalid patterns
-- Missing files
-- Permission issues
-- Invalid output formats
+## Best Practices
+
+1. **Start Small**:
+   - Begin with specific patterns and add more as needed
+   - Test with smaller directories first
+
+2. **Use Exclusions Wisely**:
+   - Exclude build directories, dependencies, and generated files
+   - Use `**` in exclude patterns to match nested directories
+
+3. **Monitor Output Size**:
+   - Use appropriate size limits for your use case
+   - Consider splitting large projects into smaller chunks
+
+4. **Choose Output Format**:
+   - Use XML for better readability
+   - Use JSON for better compatibility with other tools
+   - Use YAML for configuration-heavy projects
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Troubleshooting
+
+### Common Issues
+
+1. **No Files Found**
+   ```bash
+   # Check if files exist matching the pattern
+   filefusion . -p "*.go" --dry-run
+   ```
+
+2. **Permission Denied**
+   ```bash
+   # Run with appropriate permissions
+   sudo filefusion . -p "*.go" -o /path/to/output.xml
+   ```
+
+3. **Size Limit Exceeded**
+   ```bash
+   # Increase size limit or use more specific patterns
+   filefusion . -p "*.go" --max-size 50MB
+   ```
+
+
+
+## Performance Tips
+
+1. Use specific patterns to reduce file scanning time
+2. Exclude unnecessary directories to improve performance
+3. Set appropriate size limits to prevent memory issues
+4. Use concurrent processing for large directories
 
 ## Contributing
 
