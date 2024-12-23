@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,6 +34,13 @@ func NewMixer(options *MixOptions) *Mixer {
 
 // Mix processes and concatenates files
 func (m *Mixer) Mix() error {
+	// Resolve the input path in case it's a symlink
+	resolvedPath, err := filepath.EvalSymlinks(m.options.InputPath)
+	if err != nil {
+		return fmt.Errorf("error resolving input path: %w", err)
+	}
+	m.options.InputPath = resolvedPath
+
 	// Find all matching files
 	files, err := m.findFiles()
 	if err != nil {
@@ -116,13 +124,23 @@ func (m *Mixer) matchesAnyPattern(path, filename string) (bool, error) {
 func (m *Mixer) findFiles() ([]string, error) {
 	var matches []string
 
-	err := filepath.Walk(m.options.InputPath, func(path string, info os.FileInfo, err error) error {
+	// Use filepath.WalkDir instead of filepath.Walk for better performance
+	err := filepath.WalkDir(m.options.InputPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("error accessing path %s: %w", path, err)
 		}
 
-		// Skip directories themselves
+		// Get file info to properly handle symlinks
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("error getting file info for %s: %w", path, err)
+		}
+
+		// Skip directories themselves (but still traverse into them)
 		if info.IsDir() {
+			if d.Name() == ".git" {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
@@ -240,10 +258,19 @@ func (m *Mixer) processFile(path string) FileResult {
 		}
 	}
 
-	// Get relative path from input directory
-	relPath, err := filepath.Rel(m.options.InputPath, path)
-	if err != nil {
-		relPath = path // Fallback to full path if relative path cannot be determined
+	// Get the base directory from the input path
+	baseDir := filepath.Clean(m.options.InputPath)
+	cleanPath := filepath.Clean(path)
+
+	// Convert both paths to slashes for consistent handling
+	baseDir = filepath.ToSlash(baseDir)
+	cleanPath = filepath.ToSlash(cleanPath)
+
+	relPath := cleanPath
+	if strings.HasPrefix(cleanPath, baseDir) {
+		relPath = cleanPath[len(baseDir):]
+		// Remove leading slash if present
+		relPath = strings.TrimPrefix(relPath, "/")
 	}
 
 	return FileResult{
@@ -292,46 +319,50 @@ func (m *Mixer) generateLLMOutput(contents []FileContent) error {
 		}
 	}
 
-	if m.options.JsonOutput {
+	switch m.options.OutputType {
+	case OutputTypeJSON:
 		encoder := json.NewEncoder(file)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(output); err != nil {
 			return &MixError{Message: fmt.Sprintf("error encoding JSON: %v", err)}
 		}
 		return nil
-	}
 
-	if m.options.YamlOutput {
+	case OutputTypeYAML:
 		encoder := yaml.NewEncoder(file)
-		encoder.SetIndent(2) // Set YAML indentation to 2 spaces
+		encoder.SetIndent(2)
 		if err := encoder.Encode(output); err != nil {
 			return &MixError{Message: fmt.Sprintf("error encoding YAML: %v", err)}
 		}
 		return nil
-	}
 
-	// XML output
-	const xmlTemplate = `<documents>{{range $index, $file := .}}
+	case OutputTypeXML:
+		// XML output
+		const xmlTemplate = `<?xml version="1.0" encoding="UTF-8"?>
+<documents>{{range $index, $file := .}}
 <document index="{{add $index 1}}">
 <source>{{.Path}}</source>
 <document_content>{{.Content}}</document_content>
 </document>{{end}}
 </documents>`
 
-	// Create template with custom functions
-	t, err := template.New("llm").Funcs(template.FuncMap{
-		"add": func(a, b int) int { return a + b },
-	}).Parse(xmlTemplate)
-	if err != nil {
-		return &MixError{Message: fmt.Sprintf("error parsing template: %v", err)}
-	}
+		// Create template with custom functions
+		t, err := template.New("llm").Funcs(template.FuncMap{
+			"add": func(a, b int) int { return a + b },
+		}).Parse(xmlTemplate)
+		if err != nil {
+			return &MixError{Message: fmt.Sprintf("error parsing template: %v", err)}
+		}
 
-	// Execute template
-	if err := t.Execute(file, contents); err != nil {
-		return &MixError{Message: fmt.Sprintf("error executing template: %v", err)}
-	}
+		// Execute template
+		if err := t.Execute(file, contents); err != nil {
+			return &MixError{Message: fmt.Sprintf("error executing template: %v", err)}
+		}
+		return nil
 
-	return nil
+	default:
+		return &MixError{Message: fmt.Sprintf("unsupported output type: %s", m.options.OutputType)}
+	}
 }
 
 // min returns the smaller of two integers

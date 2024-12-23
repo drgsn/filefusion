@@ -17,7 +17,6 @@ type FileInfo struct {
 }
 
 var (
-	inputPath   string
 	outputPath  string
 	pattern     string
 	exclude     string
@@ -26,7 +25,7 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "filefusion",
+	Use:   "filefusion [paths...]",
 	Short: "Filefusion - File concatenation tool optimized for LLM usage",
 	Long: `Filefusion concatenates files into a format optimized for Large Language Models (LLMs).
 It preserves file metadata and structures the output in an XML-like or JSON format.
@@ -35,13 +34,7 @@ Complete documentation is available at https://github.com/drgsn/filefusion`,
 }
 
 func init() {
-	currentDir, err := os.Getwd()
-	if err != nil {
-		currentDir = "."
-	}
-
-	rootCmd.PersistentFlags().StringVarP(&inputPath, "input", "i", currentDir, "input directory path (default: current directory)")
-	rootCmd.PersistentFlags().StringVarP(&outputPath, "output", "o", "output.xml", "output file path (default: output.xml)")
+	rootCmd.PersistentFlags().StringVarP(&outputPath, "output", "o", "", "output file path (if not specified, generates files based on input paths)")
 	rootCmd.PersistentFlags().StringVarP(&pattern, "pattern", "p", "*.go,*.json,*.yaml,*.yml", "comma-separated file patterns (e.g., '*.go,*.json')")
 	rootCmd.PersistentFlags().StringVarP(&exclude, "exclude", "e", "", "comma-separated patterns to exclude (e.g., 'build/**,*.jar')")
 	rootCmd.PersistentFlags().StringVar(&maxFileSize, "max-size", "10MB", "maximum size per file")
@@ -54,19 +47,33 @@ func main() {
 	}
 }
 
+func deriveOutputPath(inputPath string) string {
+	// Get the last component of the path
+	base := filepath.Base(strings.TrimSuffix(inputPath, string(os.PathSeparator)))
+
+	// If it's a file, use its name with .xml extension
+	if ext := filepath.Ext(base); ext != "" {
+		return base + ".xml"
+	}
+
+	// For directories, append .xml
+	return base + ".xml"
+}
+
 func runMix(cmd *cobra.Command, args []string) error {
+
+	if len(args) == 0 {
+		currentDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+		args = []string{currentDir}
+	}
+
 	// Validate pattern first
 	if pattern == "" {
 		return fmt.Errorf("pattern cannot be empty")
 	}
-
-	// Validate output path
-	ext := strings.ToLower(filepath.Ext(outputPath))
-	if ext != ".xml" && ext != ".json" && ext != ".yaml" && ext != ".yml" {
-		return fmt.Errorf("output file must have .xml, .json, .yaml, or .yml extension")
-	}
-	jsonOutput = ext == ".json"
-	yamlOutput := ext == ".yaml" || ext == ".yml"
 
 	// Parse max file size
 	maxBytes, err := parseSize(maxFileSize)
@@ -74,48 +81,87 @@ func runMix(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid max-size value: %w", err)
 	}
 
-	// Create mixer options
-	options := &core.MixOptions{
-		InputPath:   inputPath,
-		OutputPath:  outputPath,
-		Pattern:     pattern,
-		Exclude:     exclude,
-		MaxFileSize: maxBytes,
-		JsonOutput:  jsonOutput,
-		YamlOutput:  yamlOutput,
+	// If output path is specified, validate and determine output type
+	var globalOutputType core.OutputType
+	if outputPath != "" {
+		ext := strings.ToLower(filepath.Ext(outputPath))
+		switch ext {
+		case ".json":
+			globalOutputType = core.OutputTypeJSON
+		case ".yaml", ".yml":
+			globalOutputType = core.OutputTypeYAML
+		case ".xml":
+			globalOutputType = core.OutputTypeXML
+		default:
+			return fmt.Errorf("invalid output file extension: must be .xml, .json, .yaml, or .yml")
+		}
 	}
 
-	// First, scan for files and check total size
-	files, totalSize, err := scanFiles(options)
-	if err != nil {
-		return err
-	}
+	// Process each input path
+	for _, inputPath := range args {
+		// Determine output path and type for this input
+		var currentOutputPath string
+		var outputType core.OutputType
 
-	// Print summary before processing
-	fmt.Printf("Found %d files matching pattern\n", len(files))
-	fmt.Printf("Total size: %s\n", formatSize(totalSize))
-
-	// Check if total size exceeds maximum
-	if totalSize > maxBytes {
-		fmt.Printf("\nError: Total size (%s) exceeds maximum allowed size (%s)\n",
-			formatSize(totalSize), maxFileSize)
-		fmt.Println("\nMatching files:")
-
-		// Sort files by size (largest first) and print details
-		for _, file := range files {
-			fmt.Printf("- %s (%s)\n", file.Path, formatSize(file.Size))
+		if outputPath != "" {
+			// Use global output path if specified
+			currentOutputPath = outputPath
+			outputType = globalOutputType
+		} else {
+			// Generate output path based on input path
+			currentOutputPath = deriveOutputPath(inputPath)
+			outputType = core.OutputTypeXML // Default to XML for auto-generated paths
 		}
 
-		return fmt.Errorf("total size exceeds maximum allowed size")
+		// Create mixer options
+		options := &core.MixOptions{
+			InputPath:   inputPath,
+			OutputPath:  currentOutputPath,
+			Pattern:     pattern,
+			Exclude:     exclude,
+			MaxFileSize: maxBytes,
+			OutputType:  outputType,
+		}
+
+		// First, scan for files and check total size
+		files, totalSize, err := scanFiles(options)
+		if err != nil {
+			return fmt.Errorf("error processing %s: %w", inputPath, err)
+		}
+
+		// Print summary before processing
+		fmt.Printf("Processing %s:\n", inputPath)
+		fmt.Printf("Found %d files matching pattern\n", len(files))
+		fmt.Printf("Total size: %s\n", formatSize(totalSize))
+
+		// Check if total size exceeds maximum
+		if totalSize > maxBytes {
+			fmt.Printf("\nError: Total size (%s) exceeds maximum allowed size (%s)\n",
+				formatSize(totalSize), maxFileSize)
+			fmt.Println("\nMatching files:")
+
+			for _, file := range files {
+				fmt.Printf("- %s (%s)\n", file.Path, formatSize(file.Size))
+			}
+
+			return fmt.Errorf("total size exceeds maximum allowed size for %s", inputPath)
+		}
+
+		// Create and run mixer
+		mixer := core.NewMixer(options)
+		if err := mixer.Mix(); err != nil {
+			return fmt.Errorf("error mixing %s: %w", inputPath, err)
+		}
+
+		fmt.Printf("Successfully created %s\n\n", currentOutputPath)
+
+		// If using a global output path, only process the first input
+		if outputPath != "" {
+			fmt.Println("Note: Using specified output path. Additional inputs will be ignored.")
+			break
+		}
 	}
 
-	// Create and run mixer
-	mixer := core.NewMixer(options)
-	if err := mixer.Mix(); err != nil {
-		return err
-	}
-
-	fmt.Printf("\nSuccessfully created %s\n", outputPath)
 	return nil
 }
 

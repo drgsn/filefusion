@@ -365,12 +365,12 @@ func TestOutputFormats(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		outputPath string
+		outputType OutputType
 		validate   func(t *testing.T, output []byte)
 	}{
 		{
 			name:       "XML output",
-			outputPath: "output.xml",
+			outputType: OutputTypeXML,
 			validate: func(t *testing.T, output []byte) {
 				if !bytes.Contains(output, []byte("<documents>")) {
 					t.Error("Expected XML output to contain <documents> tag")
@@ -388,7 +388,7 @@ func TestOutputFormats(t *testing.T) {
 		},
 		{
 			name:       "JSON output",
-			outputPath: "output.json",
+			outputType: OutputTypeJSON,
 			validate: func(t *testing.T, output []byte) {
 				var result struct {
 					Documents []struct {
@@ -421,7 +421,7 @@ func TestOutputFormats(t *testing.T) {
 		},
 		{
 			name:       "YAML output",
-			outputPath: "output.yaml",
+			outputType: OutputTypeYAML,
 			validate: func(t *testing.T, output []byte) {
 				var result struct {
 					Documents []struct {
@@ -456,14 +456,13 @@ func TestOutputFormats(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			outputPath := filepath.Join(tmpDir, tt.outputPath)
+			outputPath := filepath.Join(tmpDir, fmt.Sprintf("output%s", tt.outputType))
 			mixer := NewMixer(&MixOptions{
 				InputPath:   tmpDir,
 				OutputPath:  outputPath,
 				Pattern:     "*.txt",
 				MaxFileSize: 1024 * 1024,
-				JsonOutput:  strings.HasSuffix(tt.outputPath, ".json"),
-				YamlOutput:  strings.HasSuffix(tt.outputPath, ".yaml"),
+				OutputType:  tt.outputType,
 			})
 
 			if err := mixer.Mix(); err != nil {
@@ -680,6 +679,260 @@ func TestErrorHandling(t *testing.T) {
 			// Clean up permissions so the deferred cleanup can work
 			if tt.name == "permission denied" {
 				os.Chmod(filepath.Join(tmpDir, "noaccess"), 0755)
+			}
+		})
+	}
+}
+
+// TestPathPreservation tests the path handling functionality with various input scenarios
+func TestPathPreservation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping test in short mode")
+	}
+
+	// Create temporary test directory structure
+	tmpDir, err := os.MkdirTemp("", "filefusion-path-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a nested directory structure
+	dirs := []string{
+		"internal/core",
+		"internal/utils",
+		"cmd/filefusion",
+		"pkg/common",
+	}
+
+	files := map[string]string{
+		"internal/core/types.go":   "package core\n",
+		"internal/utils/helper.go": "package utils\n",
+		"cmd/filefusion/main.go":   "package main\n",
+		"pkg/common/constants.go":  "package common\n",
+	}
+
+	// Create directories and files
+	for _, dir := range dirs {
+		err := os.MkdirAll(filepath.Join(tmpDir, dir), 0755)
+		if err != nil {
+			t.Fatalf("Failed to create directory %s: %v", dir, err)
+		}
+	}
+
+	for path, content := range files {
+		fullPath := filepath.Join(tmpDir, path)
+		err := os.WriteFile(fullPath, []byte(content), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create test file %s: %v", path, err)
+		}
+	}
+
+	tests := []struct {
+		name          string
+		inputPath     string
+		pattern       string
+		expectedFiles []string
+	}{
+		{
+			name:      "single directory",
+			inputPath: filepath.Join(tmpDir, "internal"),
+			pattern:   "*.go",
+			expectedFiles: []string{
+				"core/types.go",
+				"utils/helper.go",
+			},
+		},
+		{
+			name:      "nested directory",
+			inputPath: filepath.Join(tmpDir, "internal/core"),
+			pattern:   "*.go",
+			expectedFiles: []string{
+				"types.go",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outputFile := filepath.Join(tmpDir, "output.xml")
+
+			mixer := NewMixer(&MixOptions{
+				InputPath:   tt.inputPath,
+				OutputPath:  outputFile,
+				Pattern:     tt.pattern,
+				MaxFileSize: 1024 * 1024,
+				OutputType:  OutputTypeXML,
+			})
+
+			if err := mixer.Mix(); err != nil {
+				t.Fatalf("Mix failed: %v", err)
+			}
+
+			// Read and verify output
+			content, err := os.ReadFile(outputFile)
+			if err != nil {
+				t.Fatalf("Failed to read output file: %v", err)
+			}
+
+			// Check that expected files are present with correct paths
+			for _, expectedFile := range tt.expectedFiles {
+				if !strings.Contains(string(content), "<source>"+expectedFile+"</source>") {
+					t.Errorf("Expected to find file %s in output", expectedFile)
+				}
+			}
+		})
+	}
+}
+
+// TestPathEdgeCases tests special cases in path handling like spaces, dots, and symlinks
+
+func TestPathEdgeCases(t *testing.T) {
+	// Skip on Windows since symlinks behave differently
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping test on Windows")
+	}
+
+	// Create temporary test directory
+	tmpDir, err := os.MkdirTemp("", "filefusion-path-edge-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create test files with special path cases
+	files := map[string]string{
+		"./space dir/file.go":       "package space\n",
+		"./dot.dir/file.go":         "package dot\n",
+		"./multiple/levels/file.go": "package levels\n",
+	}
+
+	// Create directories and files
+	for path, content := range files {
+		dir := filepath.Dir(filepath.Join(tmpDir, path))
+		err := os.MkdirAll(dir, 0755)
+		if err != nil {
+			t.Fatalf("Failed to create directory %s: %v", dir, err)
+		}
+		err = os.WriteFile(filepath.Join(tmpDir, path), []byte(content), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create test file %s: %v", path, err)
+		}
+	}
+
+	// Set up symlink test case
+	realDir := filepath.Join(tmpDir, "real")
+	symDir := filepath.Join(tmpDir, "symlink")
+
+	// First remove any existing symlink and real directory
+	_ = os.RemoveAll(symDir)
+	_ = os.RemoveAll(realDir)
+
+	// Create the target directory structure
+	if err := os.MkdirAll(realDir, 0755); err != nil {
+		t.Fatalf("Failed to create real directory: %v", err)
+	}
+
+	// Create test file in real directory
+	realFile := filepath.Join(realDir, "file.go")
+	if err := os.WriteFile(realFile, []byte("package real\n"), 0644); err != nil {
+		t.Fatalf("Failed to create file in real directory: %v", err)
+	}
+
+	// Create symlink
+	if err := os.Symlink(realDir, symDir); err != nil {
+		t.Fatalf("Failed to create symlink: %v", err)
+	}
+	// Verify setup
+	resolvedPath, err := filepath.EvalSymlinks(symDir)
+	if err != nil {
+		t.Fatalf("Failed to resolve symlink: %v", err)
+	}
+	resolvedInfo, err := os.Stat(resolvedPath)
+	if err != nil {
+		t.Fatalf("Failed to resolve symlink: %v", err)
+	}
+	realInfo, err := os.Stat(realDir)
+	if err != nil {
+		t.Fatalf("Failed to stat real directory: %v", err)
+	}
+	if !os.SameFile(resolvedInfo, realInfo) {
+		t.Fatalf("Symlink does not point to the expected directory")
+	}
+
+	tests := []struct {
+		name          string
+		inputPath     string
+		expectedPath  string
+		pattern       string
+		skipOnWindows bool
+	}{
+		{
+			name:         "spaces in path",
+			inputPath:    filepath.Join(tmpDir, "space dir"),
+			expectedPath: "file.go",
+			pattern:      "*.go",
+		},
+		{
+			name:         "dots in directory name",
+			inputPath:    filepath.Join(tmpDir, "dot.dir"),
+			expectedPath: "file.go",
+			pattern:      "*.go",
+		},
+		{
+			name:         "multiple path separators",
+			inputPath:    filepath.Join(tmpDir, "multiple"),
+			expectedPath: "levels/file.go",
+			pattern:      "*.go",
+		},
+		{
+			name:          "symlink directory",
+			inputPath:     symDir,
+			expectedPath:  "file.go",
+			pattern:       "*.go",
+			skipOnWindows: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.skipOnWindows && runtime.GOOS == "windows" {
+				t.Skip("Skipping symlink test on Windows")
+			}
+
+			// Debug information
+			t.Logf("Test case: %s", tt.name)
+			t.Logf("Input path: %s", tt.inputPath)
+			t.Logf("Expected path: %s", tt.expectedPath)
+
+			// Verify input path exists
+			if _, err := os.Stat(tt.inputPath); err != nil {
+				t.Fatalf("Input path does not exist or is not accessible: %v", err)
+			}
+
+			outputFile := filepath.Join(tmpDir, "output.xml")
+			mixer := NewMixer(&MixOptions{
+				InputPath:   tt.inputPath,
+				OutputPath:  outputFile,
+				Pattern:     tt.pattern,
+				MaxFileSize: 1024 * 1024,
+				OutputType:  OutputTypeXML,
+			})
+
+			if err := mixer.Mix(); err != nil {
+				t.Fatalf("Mix failed: %v", err)
+			}
+
+			// Read and verify output
+			content, err := os.ReadFile(outputFile)
+			if err != nil {
+				t.Fatalf("Failed to read output file: %v", err)
+			}
+
+			// Convert path separators to match system-specific format
+			expectedPath := filepath.FromSlash(tt.expectedPath)
+			if !strings.Contains(string(content), "<source>"+expectedPath+"</source>") {
+				t.Errorf("Expected to find path %s in output, but got:\n%s", expectedPath, content)
 			}
 		})
 	}
