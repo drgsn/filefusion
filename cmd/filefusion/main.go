@@ -30,7 +30,6 @@ var rootCmd = &cobra.Command{
 	Long: `Filefusion concatenates files into a format optimized for Large Language Models (LLMs).
 It preserves file metadata and structures the output in an XML-like or JSON format.
 Complete documentation is available at https://github.com/drgsn/filefusion`,
-	Args: cobra.MinimumNArgs(1),
 	RunE: runMix,
 }
 
@@ -62,6 +61,15 @@ func deriveOutputPath(inputPath string) string {
 }
 
 func runMix(cmd *cobra.Command, args []string) error {
+
+	if len(args) == 0 {
+		currentDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+		args = []string{currentDir}
+	}
+
 	// Validate pattern first
 	if pattern == "" {
 		return fmt.Errorf("pattern cannot be empty")

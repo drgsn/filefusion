@@ -55,7 +55,7 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/drgsn/filefusion/cmd/filefusion/main.go (88.8%)</option>
+				<option value="file0">github.com/drgsn/filefusion/cmd/filefusion/main.go (88.5%)</option>
 				
 				<option value="file1">github.com/drgsn/filefusion/internal/core/mixer.go (85.3%)</option>
 				
@@ -105,7 +105,6 @@ var rootCmd = &amp;cobra.Command{
         Long: `Filefusion concatenates files into a format optimized for Large Language Models (LLMs).
 It preserves file metadata and structures the output in an XML-like or JSON format.
 Complete documentation is available at https://github.com/drgsn/filefusion`,
-        Args: cobra.MinimumNArgs(1),
         RunE: runMix,
 }
 
@@ -137,8 +136,17 @@ func deriveOutputPath(inputPath string) string <span class="cov8" title="1">{
 }
 
 func runMix(cmd *cobra.Command, args []string) error <span class="cov8" title="1">{
+
+        if len(args) == 0 </span><span class="cov8" title="1">{
+                currentDir, err := os.Getwd()
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("failed to get current directory: %w", err)
+                }</span>
+                <span class="cov8" title="1">args = []string{currentDir}</span>
+        }
+
         // Validate pattern first
-        if pattern == "" </span><span class="cov8" title="1">{
+        <span class="cov8" title="1">if pattern == "" </span><span class="cov8" title="1">{
                 return fmt.Errorf("pattern cannot be empty")
         }</span>
 
