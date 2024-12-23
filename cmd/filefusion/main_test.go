@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,23 +26,6 @@ It preserves file metadata and structures the output in an XML-like or JSON form
 	rootCmd.PersistentFlags().StringVarP(&pattern, "pattern", "p", "*.go,*.json,*.yaml,*.yml", "file patterns")
 	rootCmd.PersistentFlags().StringVarP(&exclude, "exclude", "e", "", "exclude patterns")
 	rootCmd.PersistentFlags().StringVar(&maxFileSize, "max-size", "10MB", "maximum size per file")
-}
-
-// Helper function to capture stdout for testing
-func captureOutput(fn func() error) (string, error) {
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := fn()
-
-	// Restore stdout and get output
-	os.Stdout = old
-	w.Close()
-	var buf bytes.Buffer
-	io.Copy(&buf, r)
-
-	return buf.String(), err
 }
 
 func TestDeriveOutputPath(t *testing.T) {
@@ -194,7 +176,13 @@ func TestMultipleInputPaths(t *testing.T) {
 			if err := os.Chdir(outputDir); err != nil {
 				t.Fatalf("Failed to change directory: %v", err)
 			}
-			defer os.Chdir(wd)
+
+			// Ensure we change back to the original directory
+			defer func() {
+				if err := os.Chdir(wd); err != nil {
+					t.Errorf("Failed to change back to original directory: %v", err)
+				}
+			}()
 
 			// Reset and reinitialize command for each test
 			setupRootCmd()
@@ -548,35 +536,40 @@ func TestRootCommandFlags(t *testing.T) {
 	}
 }
 
-// Fix 3: Create a separate test for no-args case
 func TestRootCommandWithNoArgs(t *testing.T) {
-	// Create a temporary directory for testing
+	// Create temporary directory for testing
 	tmpDir, err := os.MkdirTemp("", "filefusion-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create a test file in the temp directory
+	// Create a test file
 	testFile := filepath.Join(tmpDir, "test.go")
 	if err := os.WriteFile(testFile, []byte("package main\n\nfunc main() {}\n"), 0644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	// Change to the temporary directory
+	// Get and save the current directory
 	originalDir, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("Failed to get current directory: %v", err)
 	}
+
+	// Change to the temporary directory
 	if err := os.Chdir(tmpDir); err != nil {
 		t.Fatalf("Failed to change directory: %v", err)
 	}
-	defer os.Chdir(originalDir)
+
+	// Ensure we change back to the original directory
+	defer func() {
+		if err := os.Chdir(originalDir); err != nil {
+			t.Errorf("Failed to change back to original directory: %v", err)
+		}
+	}()
 
 	// Reset and setup the root command
 	setupRootCmd()
-
-	// Test with no args (should use current directory)
 	rootCmd.SetArgs([]string{})
 
 	// Execute the command
@@ -659,7 +652,6 @@ func TestOutputContents(t *testing.T) {
 			outputPath := filepath.Join(tmpDir, tt.outputFlag)
 
 			// Reset and set up command
-			rootCmd.ResetFlags()
 			setupRootCmd()
 
 			rootCmd.SetArgs([]string{
@@ -691,60 +683,55 @@ func TestOutputContents(t *testing.T) {
 	}
 }
 
-func TestRunMixWithNoArgs(t *testing.T) {
-	// Create a temporary directory for testing
+func TestSizeExceedCase(t *testing.T) {
+	// Create temp dir with files exceeding max size
 	tmpDir, err := os.MkdirTemp("", "filefusion-test-*")
 	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
+		t.Fatal(err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create a test file in the temp directory
-	testFile := filepath.Join(tmpDir, "test.go")
-	if err := os.WriteFile(testFile, []byte("package main\n\nfunc main() {}\n"), 0644); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
+	// Create test files with specific sizes
+	files := map[string]struct {
+		name    string
+		content string
+	}{
+		"test1.go": {
+			name:    "test1.go",
+			content: strings.Repeat("a", 1024*1024), // 1MB
+		},
+		"test2.go": {
+			name:    "test2.go",
+			content: strings.Repeat("b", 1024*1024), // 1MB
+		},
 	}
 
-	// Change to the temporary directory
-	originalDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Failed to get current directory: %v", err)
+	// Create the files
+	for _, file := range files {
+		path := filepath.Join(tmpDir, file.name)
+		if err := os.WriteFile(path, []byte(file.content), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("Failed to change directory: %v", err)
-	}
-	defer os.Chdir(originalDir)
 
-	// Reset and setup the root command
+	// Set up command
 	setupRootCmd()
+	rootCmd.SetArgs([]string{
+		"--max-size", "1MB", // Set max size to 1MB
+		"--pattern", "*.go",
+		tmpDir,
+	})
 
-	// Test with no args (should use current directory)
-	rootCmd.SetArgs([]string{})
+	// Execute command
+	err = rootCmd.Execute()
 
-	// Execute the command
-	if err := rootCmd.Execute(); err != nil {
-		t.Errorf("Command execution failed: %v", err)
+	// Verify we get an error about exceeding size
+	if err == nil {
+		t.Fatal("Expected error for exceeding max size")
 	}
 
-	// Get the base name of the directory for the expected output file
-	baseName := filepath.Base(tmpDir)
-	expectedOutput := filepath.Join(tmpDir, baseName+".xml")
-
-	// Check if output file exists and has content
-	fileInfo, err := os.Stat(expectedOutput)
-	if os.IsNotExist(err) {
-		t.Errorf("Expected output file %s was not created", expectedOutput)
-	} else if err != nil {
-		t.Errorf("Error checking output file: %v", err)
-	} else if fileInfo.Size() == 0 {
-		t.Error("Output file was created but is empty")
-	}
-
-	// Optionally, verify the content of the output file
-	content, err := os.ReadFile(expectedOutput)
-	if err != nil {
-		t.Errorf("Failed to read output file: %v", err)
-	} else if !bytes.Contains(content, []byte("package main")) {
-		t.Error("Output file doesn't contain expected content")
+	// Check that the error message contains the expected text
+	if !strings.Contains(err.Error(), "total size exceeds maximum allowed size") {
+		t.Errorf("Expected error about exceeding size limit, got: %v", err)
 	}
 }
