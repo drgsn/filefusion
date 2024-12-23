@@ -55,7 +55,7 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/drgsn/filefusion/cmd/filefusion/main.go (38.2%)</option>
+				<option value="file0">github.com/drgsn/filefusion/cmd/filefusion/main.go (73.6%)</option>
 				
 				<option value="file1">github.com/drgsn/filefusion/internal/core/mixer.go (86.0%)</option>
 				
@@ -76,218 +76,271 @@
 		<pre class="file" id="file0" style="display: none">package main
 
 import (
-    "fmt"
-    "os"
-    "path/filepath"
-    "strconv"
-    "strings"
+        "fmt"
+        "os"
+        "path/filepath"
+        "strconv"
+        "strings"
 
-    "github.com/spf13/cobra"
-    "github.com/drgsn/filefusion/internal/core"
+        "github.com/drgsn/filefusion/internal/core"
+        "github.com/spf13/cobra"
 )
 
 type FileInfo struct {
-    Path string `json:"path"`
-    Size int64  `json:"size"`
+        Path string `json:"path"`
+        Size int64  `json:"size"`
 }
 
 var (
-    inputPath    string
-    outputPath   string
-    pattern      string
-    exclude      string
-    maxFileSize  string
-    jsonOutput   bool
+        inputPath   string
+        outputPath  string
+        pattern     string
+        exclude     string
+        maxFileSize string
+        jsonOutput  bool
 )
 
 var rootCmd = &amp;cobra.Command{
-    Use:   "filefusion",
-    Short: "Filefusion - File concatenation tool optimized for LLM usage",
-    Long: `Filefusion concatenates files into a format optimized for Large Language Models (LLMs).
+        Use:   "filefusion",
+        Short: "Filefusion - File concatenation tool optimized for LLM usage",
+        Long: `Filefusion concatenates files into a format optimized for Large Language Models (LLMs).
 It preserves file metadata and structures the output in an XML-like or JSON format.
 Complete documentation is available at https://github.com/drgsn/filefusion`,
-    RunE: runMix,
+        RunE: runMix,
 }
 
 func init() <span class="cov8" title="1">{
-    currentDir, err := os.Getwd()
-    if err != nil </span><span class="cov0" title="0">{
-        currentDir = "."
-    }</span>
+        currentDir, err := os.Getwd()
+        if err != nil </span><span class="cov0" title="0">{
+                currentDir = "."
+        }</span>
 
-    <span class="cov8" title="1">rootCmd.PersistentFlags().StringVarP(&amp;inputPath, "input", "i", currentDir, "input directory path (default: current directory)")
-    rootCmd.PersistentFlags().StringVarP(&amp;outputPath, "output", "o", "output.xml", "output file path (default: output.xml)")
-    rootCmd.PersistentFlags().StringVarP(&amp;pattern, "pattern", "p", "*.go,*.json,*.yaml,*.yml", "comma-separated file patterns (e.g., '*.go,*.json')")
-    rootCmd.PersistentFlags().StringVarP(&amp;exclude, "exclude", "e", "", "comma-separated patterns to exclude (e.g., 'build/**,*.jar')")
-    rootCmd.PersistentFlags().StringVar(&amp;maxFileSize, "max-size", "10MB", "maximum size per file")</span>
+        <span class="cov8" title="1">rootCmd.PersistentFlags().StringVarP(&amp;inputPath, "input", "i", currentDir, "input directory path (default: current directory)")
+        rootCmd.PersistentFlags().StringVarP(&amp;outputPath, "output", "o", "output.xml", "output file path (default: output.xml)")
+        rootCmd.PersistentFlags().StringVarP(&amp;pattern, "pattern", "p", "*.go,*.json,*.yaml,*.yml", "comma-separated file patterns (e.g., '*.go,*.json')")
+        rootCmd.PersistentFlags().StringVarP(&amp;exclude, "exclude", "e", "", "comma-separated patterns to exclude (e.g., 'build/**,*.jar')")
+        rootCmd.PersistentFlags().StringVar(&amp;maxFileSize, "max-size", "10MB", "maximum size per file")</span>
 }
 
 func main() <span class="cov0" title="0">{
-    if err := rootCmd.Execute(); err != nil </span><span class="cov0" title="0">{
-        fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-        os.Exit(1)
-    }</span>
+        if err := rootCmd.Execute(); err != nil </span><span class="cov0" title="0">{
+                fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+                os.Exit(1)
+        }</span>
 }
 
-
-func runMix(cmd *cobra.Command, args []string) error <span class="cov0" title="0">{
-    // Validate output path
-    ext := strings.ToLower(filepath.Ext(outputPath))
-    if ext != ".xml" &amp;&amp; ext != ".json" &amp;&amp; ext != ".yaml" &amp;&amp; ext != ".yml" </span><span class="cov0" title="0">{
-        return fmt.Errorf("output file must have .xml, .json, .yaml, or .yml extension")
-    }</span>
-    <span class="cov0" title="0">jsonOutput = ext == ".json"
-    yamlOutput := ext == ".yaml" || ext == ".yml"
-
-    // Parse max file size
-    maxBytes, err := parseSize(maxFileSize)
-    if err != nil </span><span class="cov0" title="0">{
-        return fmt.Errorf("invalid max-size value: %w", err)
-    }</span>
-
-    // Create mixer options
-    <span class="cov0" title="0">options := &amp;core.MixOptions{
-        InputPath:   inputPath,
-        OutputPath:  outputPath,
-        Pattern:     pattern,
-        MaxFileSize: maxBytes,
-        JsonOutput:  jsonOutput,
-        YamlOutput:  yamlOutput,
-    }
-
-    // First, scan for files and check total size
-    files, totalSize, err := scanFiles(options)
-    if err != nil </span><span class="cov0" title="0">{
-        return err
-    }</span>
-
-    // Print summary before processing
-    <span class="cov0" title="0">fmt.Printf("Found %d files matching pattern\n", len(files))
-    fmt.Printf("Total size: %s\n", formatSize(totalSize))
-
-    // Check if total size exceeds maximum
-    if totalSize &gt; maxBytes </span><span class="cov0" title="0">{
-        fmt.Printf("\nError: Total size (%s) exceeds maximum allowed size (%s)\n", 
-            formatSize(totalSize), maxFileSize)
-        fmt.Println("\nMatching files:")
-        
-        // Sort files by size (largest first) and print details
-        for _, file := range files </span><span class="cov0" title="0">{
-            fmt.Printf("- %s (%s)\n", file.Path, formatSize(file.Size))
-        }</span>
-        
-        <span class="cov0" title="0">return fmt.Errorf("total size exceeds maximum allowed size")</span>
-    }
-
-    // Create and run mixer
-    <span class="cov0" title="0">mixer := core.NewMixer(options)
-    if err := mixer.Mix(); err != nil </span><span class="cov0" title="0">{
-        return err
-    }</span>
-
-    <span class="cov0" title="0">fmt.Printf("\nSuccessfully created %s\n", outputPath)
-    return nil</span>
-}
-
-func scanFiles(options *core.MixOptions) ([]FileInfo, int64, error) <span class="cov0" title="0">{
-    var files []FileInfo
-    var totalSize int64
-
-    patterns := strings.Split(options.Pattern, ",")
-    for i := range patterns </span><span class="cov0" title="0">{
-        patterns[i] = strings.TrimSpace(patterns[i])
-    }</span>
-
-    <span class="cov0" title="0">err := filepath.Walk(options.InputPath, func(path string, info os.FileInfo, err error) error </span><span class="cov0" title="0">{
-        if err != nil </span><span class="cov0" title="0">{
-            return err
-        }</span>
-        <span class="cov0" title="0">if info.IsDir() </span><span class="cov0" title="0">{
-            return nil
+func runMix(cmd *cobra.Command, args []string) error <span class="cov8" title="1">{
+        // Validate pattern first
+        if pattern == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("pattern cannot be empty")
         }</span>
 
-        // Check if file matches any pattern
-        <span class="cov0" title="0">for _, pattern := range patterns </span><span class="cov0" title="0">{
-            match, err := filepath.Match(pattern, filepath.Base(path))
-            if err != nil </span><span class="cov0" title="0">{
-                return err
-            }</span>
-            <span class="cov0" title="0">if match </span><span class="cov0" title="0">{
-                relPath, err := filepath.Rel(options.InputPath, path)
-                if err != nil </span><span class="cov0" title="0">{
-                    relPath = path
-                }</span>
-                <span class="cov0" title="0">files = append(files, FileInfo{
-                    Path: relPath,
-                    Size: info.Size(),
-                })
-                totalSize += info.Size()
-                break</span>
-            }
+        // Validate output path
+        <span class="cov8" title="1">ext := strings.ToLower(filepath.Ext(outputPath))
+        if ext != ".xml" &amp;&amp; ext != ".json" &amp;&amp; ext != ".yaml" &amp;&amp; ext != ".yml" </span><span class="cov8" title="1">{
+                return fmt.Errorf("output file must have .xml, .json, .yaml, or .yml extension")
+        }</span>
+        <span class="cov8" title="1">jsonOutput = ext == ".json"
+        yamlOutput := ext == ".yaml" || ext == ".yml"
+
+        // Parse max file size
+        maxBytes, err := parseSize(maxFileSize)
+        if err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("invalid max-size value: %w", err)
+        }</span>
+
+        // Create mixer options
+        <span class="cov0" title="0">options := &amp;core.MixOptions{
+                InputPath:   inputPath,
+                OutputPath:  outputPath,
+                Pattern:     pattern,
+                Exclude:     exclude,
+                MaxFileSize: maxBytes,
+                JsonOutput:  jsonOutput,
+                YamlOutput:  yamlOutput,
         }
-        <span class="cov0" title="0">return nil</span>
-    })
 
-    <span class="cov0" title="0">if err != nil </span><span class="cov0" title="0">{
-        return nil, 0, err
-    }</span>
+        // First, scan for files and check total size
+        files, totalSize, err := scanFiles(options)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
 
-    <span class="cov0" title="0">return files, totalSize, nil</span>
+        // Print summary before processing
+        <span class="cov0" title="0">fmt.Printf("Found %d files matching pattern\n", len(files))
+        fmt.Printf("Total size: %s\n", formatSize(totalSize))
+
+        // Check if total size exceeds maximum
+        if totalSize &gt; maxBytes </span><span class="cov0" title="0">{
+                fmt.Printf("\nError: Total size (%s) exceeds maximum allowed size (%s)\n",
+                        formatSize(totalSize), maxFileSize)
+                fmt.Println("\nMatching files:")
+
+                // Sort files by size (largest first) and print details
+                for _, file := range files </span><span class="cov0" title="0">{
+                        fmt.Printf("- %s (%s)\n", file.Path, formatSize(file.Size))
+                }</span>
+
+                <span class="cov0" title="0">return fmt.Errorf("total size exceeds maximum allowed size")</span>
+        }
+
+        // Create and run mixer
+        <span class="cov0" title="0">mixer := core.NewMixer(options)
+        if err := mixer.Mix(); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">fmt.Printf("\nSuccessfully created %s\n", outputPath)
+        return nil</span>
+}
+
+func scanFiles(options *core.MixOptions) ([]FileInfo, int64, error) <span class="cov8" title="1">{
+        var files []FileInfo
+        var totalSize int64
+
+        // Prepare patterns
+        patterns := strings.Split(options.Pattern, ",")
+        for i := range patterns </span><span class="cov8" title="1">{
+                patterns[i] = strings.TrimSpace(patterns[i])
+        }</span>
+
+        // Prepare exclude patterns
+        <span class="cov8" title="1">var excludePatterns []string
+        if options.Exclude != "" </span><span class="cov8" title="1">{
+                excludePatterns = strings.Split(options.Exclude, ",")
+                for i := range excludePatterns </span><span class="cov8" title="1">{
+                        excludePatterns[i] = strings.TrimSpace(excludePatterns[i])
+                }</span>
+        }
+
+        <span class="cov8" title="1">err := filepath.Walk(options.InputPath, func(path string, info os.FileInfo, err error) error </span><span class="cov8" title="1">{
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
+                // Skip directories
+                <span class="cov8" title="1">if info.IsDir() </span><span class="cov8" title="1">{
+                        // Skip .git directory
+                        if filepath.Base(path) == ".git" </span><span class="cov8" title="1">{
+                                return filepath.SkipDir
+                        }</span>
+                        <span class="cov8" title="1">return nil</span>
+                }
+
+                // Get relative path for pattern matching
+                <span class="cov8" title="1">relPath, err := filepath.Rel(options.InputPath, path)
+                if err != nil </span><span class="cov0" title="0">{
+                        relPath = path
+                }</span>
+
+                // Check exclusions first
+                <span class="cov8" title="1">for _, pattern := range excludePatterns </span><span class="cov8" title="1">{
+                        if pattern == "" </span><span class="cov0" title="0">{
+                                continue</span>
+                        }
+
+                        // Handle directory wildcards
+                        <span class="cov8" title="1">if strings.Contains(pattern, "**") </span><span class="cov8" title="1">{
+                                pattern = strings.ReplaceAll(pattern, "**", "*")
+                                if matched, _ := filepath.Match(pattern, relPath); matched </span><span class="cov8" title="1">{
+                                        return nil
+                                }</span>
+                        } else<span class="cov0" title="0"> {
+                                if matched, _ := filepath.Match(pattern, relPath); matched </span><span class="cov0" title="0">{
+                                        return nil
+                                }</span>
+                        }
+                }
+
+                // Check if file matches any inclusion pattern
+                <span class="cov8" title="1">for _, pattern := range patterns </span><span class="cov8" title="1">{
+                        match, err := filepath.Match(pattern, filepath.Base(path))
+                        if err != nil </span><span class="cov0" title="0">{
+                                return err
+                        }</span>
+                        <span class="cov8" title="1">if match </span><span class="cov8" title="1">{
+                                // Check file size
+                                if info.Size() &lt;= options.MaxFileSize </span><span class="cov8" title="1">{
+                                        files = append(files, FileInfo{
+                                                Path: relPath,
+                                                Size: info.Size(),
+                                        })
+                                        totalSize += info.Size()
+                                }</span>
+                                <span class="cov8" title="1">break</span>
+                        }
+                }
+                <span class="cov8" title="1">return nil</span>
+        })
+
+        <span class="cov8" title="1">if err != nil </span><span class="cov0" title="0">{
+                return nil, 0, err
+        }</span>
+
+        <span class="cov8" title="1">return files, totalSize, nil</span>
 }
 
 // parseSize converts a size string (e.g., "10MB") to bytes
+
 func parseSize(size string) (int64, error) <span class="cov8" title="1">{
-    // Remove all spaces and convert to uppercase
-    size = strings.ToUpper(strings.ReplaceAll(size, " ", ""))
-    var multiplier int64 = 1
-    var value string
+        // Remove all spaces and convert to uppercase
+        size = strings.ToUpper(strings.ReplaceAll(size, " ", ""))
 
-    switch </span>{
-    case strings.HasSuffix(size, "TB"):<span class="cov8" title="1">
-        multiplier = 1024 * 1024 * 1024 * 1024
-        value = strings.TrimSuffix(size, "TB")</span>
-    case strings.HasSuffix(size, "GB"):<span class="cov8" title="1">
-        multiplier = 1024 * 1024 * 1024
-        value = strings.TrimSuffix(size, "GB")</span>
-    case strings.HasSuffix(size, "MB"):<span class="cov8" title="1">
-        multiplier = 1024 * 1024
-        value = strings.TrimSuffix(size, "MB")</span>
-    case strings.HasSuffix(size, "KB"):<span class="cov8" title="1">
-        multiplier = 1024
-        value = strings.TrimSuffix(size, "KB")</span>
-    case strings.HasSuffix(size, "B"):<span class="cov8" title="1">
-        value = strings.TrimSuffix(size, "B")</span>
-    default:<span class="cov0" title="0">
-        return 0, fmt.Errorf("invalid size format: must end with B, KB, MB, GB, or TB")</span>
-    }
+        if size == "" </span><span class="cov0" title="0">{
+                return 0, fmt.Errorf("size cannot be empty")
+        }</span>
 
-    // Parse the numeric value
-    <span class="cov8" title="1">num, err := strconv.ParseInt(value, 10, 64)
-    if err != nil </span><span class="cov8" title="1">{
-        return 0, fmt.Errorf("invalid size number: %w", err)
-    }</span>
+        <span class="cov8" title="1">var multiplier int64 = 1
+        var value string
 
-    // Check for negative numbers
-    <span class="cov8" title="1">if num &lt;= 0 </span><span class="cov8" title="1">{
-        return 0, fmt.Errorf("size must be a positive number")
-    }</span>
+        // Check for valid suffix first
+        switch </span>{
+        case strings.HasSuffix(size, "TB"):<span class="cov8" title="1">
+                multiplier = 1024 * 1024 * 1024 * 1024
+                value = strings.TrimSuffix(size, "TB")</span>
+        case strings.HasSuffix(size, "GB"):<span class="cov8" title="1">
+                multiplier = 1024 * 1024 * 1024
+                value = strings.TrimSuffix(size, "GB")</span>
+        case strings.HasSuffix(size, "MB"):<span class="cov8" title="1">
+                multiplier = 1024 * 1024
+                value = strings.TrimSuffix(size, "MB")</span>
+        case strings.HasSuffix(size, "KB"):<span class="cov8" title="1">
+                multiplier = 1024
+                value = strings.TrimSuffix(size, "KB")</span>
+        case strings.HasSuffix(size, "B"):<span class="cov8" title="1">
+                value = strings.TrimSuffix(size, "B")</span>
+        default:<span class="cov8" title="1">
+                return 0, fmt.Errorf("invalid size format: must end with B, KB, MB, GB, or TB")</span>
+        }
 
-    <span class="cov8" title="1">return num * multiplier, nil</span>
+        // Parse the numeric value
+        <span class="cov8" title="1">num, err := strconv.ParseInt(value, 10, 64)
+        if err != nil </span><span class="cov8" title="1">{
+                return 0, fmt.Errorf("invalid size number: %w", err)
+        }</span>
+
+        // Check for negative numbers
+        <span class="cov8" title="1">if num &lt;= 0 </span><span class="cov8" title="1">{
+                return 0, fmt.Errorf("size must be a positive number")
+        }</span>
+
+        <span class="cov8" title="1">return num * multiplier, nil</span>
 }
 
 // formatSize converts bytes to a human-readable string
 func formatSize(bytes int64) string <span class="cov8" title="1">{
-    const unit = 1024
-    if bytes &lt; unit </span><span class="cov8" title="1">{
-        return fmt.Sprintf("%d B", bytes)
-    }</span>
-    <span class="cov8" title="1">div, exp := int64(unit), 0
-    for n := bytes / unit; n &gt;= unit; n /= unit </span><span class="cov8" title="1">{
-        div *= unit
-        exp++
-    }</span>
-    <span class="cov8" title="1">return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])</span>
-}</pre>
+        const unit = 1024
+        if bytes &lt; unit </span><span class="cov8" title="1">{
+                return fmt.Sprintf("%d B", bytes)
+        }</span>
+        <span class="cov8" title="1">div, exp := int64(unit), 0
+        for n := bytes / unit; n &gt;= unit; n /= unit </span><span class="cov8" title="1">{
+                div *= unit
+                exp++
+        }</span>
+        <span class="cov8" title="1">return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])</span>
+}
+</pre>
 		
 		<pre class="file" id="file1" style="display: none">package core
 
