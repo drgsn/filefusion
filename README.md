@@ -17,9 +17,15 @@ FileFusion is a powerful command-line tool designed to concatenate and process f
 
 ## Installation
 
+If you have Go installed, you can install FileFusion directly:
+
 ```bash
 go install github.com/drgsn/filefusion/cmd/filefusion@latest
 ```
+
+or 
+
+Download the latest binary for your platform from the [releases page](https://github.com/drgsn/filefusion/releases).
 
 ## Default Values
 
@@ -79,6 +85,23 @@ filefusion -o output.yaml /path/to/project
 ```
 
 The output format is determined by the file extension.
+
+### Pattern Matching Rules
+
+- Use `*` to match any sequence of characters in a filename
+- Use `**` in exclude patterns to match any number of subdirectories
+- Patterns are case-sensitive by default
+- Multiple patterns can be separated by commas
+- Exclude patterns take precedence over include patterns
+
+### Pattern Examples
+
+- `*.go`: All Go files
+- `*.{go,proto}`: All Go and Proto files
+- `src/**/*.js`: All JavaScript files under src directory and its subdirectories
+- `!vendor/**`: Exclude all files in vendor directory and its subdirectories
+- `**/*_test.go`: Exclude all Go test files in any directory
+
 
 ### File Patterns (-p, --pattern)
 
