@@ -20,7 +20,7 @@ func NewFileProcessor(options *MixOptions) *FileProcessor {
 
 // ProcessFiles processes multiple files concurrently
 func (p *FileProcessor) ProcessFiles(paths []string) ([]FileContent, error) {
-	numWorkers := min(len(paths), 10) // Limit max number of concurrent workers
+	numWorkers := min(len(paths), 10)
 	results := make(chan FileResult, len(paths))
 	var wg sync.WaitGroup
 
@@ -58,17 +58,18 @@ func (p *FileProcessor) ProcessFiles(paths []string) ([]FileContent, error) {
 			errors = append(errors, result.Error)
 			continue
 		}
-		if result.Content.Size > 0 { // Skip empty results
+		if result.Content.Size > 0 && result.Content.Size <= p.options.MaxFileSize {
 			contents = append(contents, result.Content)
 		}
 	}
 
-	// If any errors occurred, return the first one
+	// Return the first error encountered, but still return processed files
+	var firstError error
 	if len(errors) > 0 {
-		return nil, errors[0]
+		firstError = errors[0]
 	}
 
-	return contents, nil
+	return contents, firstError
 }
 
 // processFile handles processing of a single file

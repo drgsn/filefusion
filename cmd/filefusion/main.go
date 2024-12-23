@@ -17,10 +17,11 @@ type FileInfo struct {
 }
 
 var (
-	outputPath  string
-	pattern     string
-	exclude     string
-	maxFileSize string
+	outputPath    string
+	pattern       string
+	exclude       string
+	maxFileSize   string
+	maxOutputSize string
 )
 
 var rootCmd = &cobra.Command{
@@ -36,7 +37,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&outputPath, "output", "o", "", "output file path (if not specified, generates files based on input paths)")
 	rootCmd.PersistentFlags().StringVarP(&pattern, "pattern", "p", "*.go,*.json,*.yaml,*.yml", "comma-separated file patterns (e.g., '*.go,*.json')")
 	rootCmd.PersistentFlags().StringVarP(&exclude, "exclude", "e", "", "comma-separated patterns to exclude (e.g., 'build/**,*.jar')")
-	rootCmd.PersistentFlags().StringVar(&maxFileSize, "max-size", "10MB", "maximum size per file")
+	rootCmd.PersistentFlags().StringVar(&maxFileSize, "max-file-size", "10MB", "maximum size for individual input files")
+	rootCmd.PersistentFlags().StringVar(&maxOutputSize, "max-output-size", "50MB", "maximum size for the output file")
 }
 
 func main() {
@@ -60,7 +62,6 @@ func deriveOutputPath(inputPath string) string {
 }
 
 func runMix(cmd *cobra.Command, args []string) error {
-
 	if len(args) == 0 {
 		currentDir, err := os.Getwd()
 		if err != nil {
@@ -75,9 +76,15 @@ func runMix(cmd *cobra.Command, args []string) error {
 	}
 
 	// Parse max file size
-	maxBytes, err := parseSize(maxFileSize)
+	maxFileSizeBytes, err := parseSize(maxFileSize)
 	if err != nil {
-		return fmt.Errorf("invalid max-size value: %w", err)
+		return fmt.Errorf("invalid max-file-size value: %w", err)
+	}
+
+	// Parse max output size
+	maxOutputSizeBytes, err := parseSize(maxOutputSize)
+	if err != nil {
+		return fmt.Errorf("invalid max-output-size value: %w", err)
 	}
 
 	// If output path is specified, validate and determine output type
@@ -103,23 +110,22 @@ func runMix(cmd *cobra.Command, args []string) error {
 		var outputType core.OutputType
 
 		if outputPath != "" {
-			// Use global output path if specified
 			currentOutputPath = outputPath
 			outputType = globalOutputType
 		} else {
-			// Generate output path based on input path
 			currentOutputPath = deriveOutputPath(inputPath)
 			outputType = core.OutputTypeXML // Default to XML for auto-generated paths
 		}
 
 		// Create mixer options
 		options := &core.MixOptions{
-			InputPath:   inputPath,
-			OutputPath:  currentOutputPath,
-			Pattern:     pattern,
-			Exclude:     exclude,
-			MaxFileSize: maxBytes,
-			OutputType:  outputType,
+			InputPath:     inputPath,
+			OutputPath:    currentOutputPath,
+			Pattern:       pattern,
+			Exclude:       exclude,
+			MaxFileSize:   maxFileSizeBytes,
+			MaxOutputSize: maxOutputSizeBytes,
+			OutputType:    outputType,
 		}
 
 		// First, scan for files and check total size
@@ -134,21 +140,27 @@ func runMix(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Total size: %s\n", formatSize(totalSize))
 
 		// Check if total size exceeds maximum
-		if totalSize > maxBytes {
-			fmt.Printf("\nError: Total size (%s) exceeds maximum allowed size (%s)\n",
-				formatSize(totalSize), maxFileSize)
+		if totalSize > maxOutputSizeBytes {
+			fmt.Printf("\nError: Total output size (%s) exceeds maximum allowed size (%s)\n",
+				formatSize(totalSize), formatSize(maxOutputSizeBytes))
 			fmt.Println("\nMatching files:")
 
 			for _, file := range files {
 				fmt.Printf("- %s (%s)\n", file.Path, formatSize(file.Size))
 			}
 
-			return fmt.Errorf("total size exceeds maximum allowed size for %s", inputPath)
+			return fmt.Errorf("output size exceeds maximum allowed size")
 		}
 
 		// Create and run mixer
 		mixer := core.NewMixer(options)
 		if err := mixer.Mix(); err != nil {
+			if strings.Contains(err.Error(), "output size exceeds maximum") {
+				fmt.Println("\nMatching files:")
+				for _, file := range files {
+					fmt.Printf("- %s (%s)\n", file.Path, formatSize(file.Size))
+				}
+			}
 			return fmt.Errorf("error mixing %s: %w", inputPath, err)
 		}
 

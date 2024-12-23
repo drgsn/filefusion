@@ -21,52 +21,84 @@ func NewOutputGenerator(options *MixOptions) *OutputGenerator {
 
 // Generate creates the output file in the specified format
 func (g *OutputGenerator) Generate(contents []FileContent) error {
-	file, err := os.Create(g.options.OutputPath)
+	// Create a temporary file first
+	tempFile, err := os.CreateTemp("", "filefusion-*")
 	if err != nil {
 		return &MixError{
 			File:    g.options.OutputPath,
-			Message: fmt.Sprintf("error creating output file: %v", err),
+			Message: fmt.Sprintf("error creating temporary file: %v", err),
 		}
 	}
-	defer file.Close()
+	tempPath := tempFile.Name()
+	defer os.Remove(tempPath) // Clean up temp file
 
-	// Common structure for JSON and YAML output
-	type Document struct {
-		Index           int    `json:"index" yaml:"index"`
-		Source          string `json:"source" yaml:"source"`
-		DocumentContent string `json:"document_content" yaml:"document_content"`
+	// Generate content to temporary file
+	switch g.options.OutputType {
+	case OutputTypeJSON:
+		err = g.generateJSON(tempFile, contents)
+	case OutputTypeYAML:
+		err = g.generateYAML(tempFile, contents)
+	case OutputTypeXML:
+		err = g.generateXML(tempFile, contents)
+	default:
+		return &MixError{Message: fmt.Sprintf("unsupported output type: %s", g.options.OutputType)}
 	}
 
-	type Output struct {
-		Documents []Document `json:"documents" yaml:"documents"`
+	if err != nil {
+		return err
 	}
 
-	// Convert contents to output format
-	output := Output{
-		Documents: make([]Document, len(contents)),
+	// Close the temp file to ensure all content is written
+	tempFile.Close()
+
+	// Check the size of the generated file
+	info, err := os.Stat(tempPath)
+	if err != nil {
+		return &MixError{Message: fmt.Sprintf("error checking output file size: %v", err)}
 	}
 
+	if info.Size() > g.options.MaxOutputSize {
+		return &MixError{
+			Message: fmt.Sprintf("output size (%d bytes) exceeds maximum allowed size (%d bytes)",
+				info.Size(), g.options.MaxOutputSize),
+		}
+	}
+
+	// If size is OK, move the temp file to the final destination
+	return os.Rename(tempPath, g.options.OutputPath)
+}
+
+// In internal/core/output.go
+
+func (g *OutputGenerator) generateJSON(file *os.File, contents []FileContent) error {
+	// Create a wrapper structure
+	output := struct {
+		Documents []struct {
+			Index           int    `json:"index"`
+			Source          string `json:"source"`
+			DocumentContent string `json:"document_content"`
+		} `json:"documents"`
+	}{
+		Documents: make([]struct {
+			Index           int    `json:"index"`
+			Source          string `json:"source"`
+			DocumentContent string `json:"document_content"`
+		}, len(contents)),
+	}
+
+	// Fill the structure
 	for i, content := range contents {
-		output.Documents[i] = Document{
+		output.Documents[i] = struct {
+			Index           int    `json:"index"`
+			Source          string `json:"source"`
+			DocumentContent string `json:"document_content"`
+		}{
 			Index:           i + 1,
 			Source:          content.Path,
 			DocumentContent: content.Content,
 		}
 	}
 
-	switch g.options.OutputType {
-	case OutputTypeJSON:
-		return g.generateJSON(file, output)
-	case OutputTypeYAML:
-		return g.generateYAML(file, output)
-	case OutputTypeXML:
-		return g.generateXML(file, contents)
-	default:
-		return &MixError{Message: fmt.Sprintf("unsupported output type: %s", g.options.OutputType)}
-	}
-}
-
-func (g *OutputGenerator) generateJSON(file *os.File, output interface{}) error {
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(output); err != nil {
@@ -76,9 +108,43 @@ func (g *OutputGenerator) generateJSON(file *os.File, output interface{}) error 
 }
 
 func (g *OutputGenerator) generateYAML(file *os.File, output interface{}) error {
+	// Create the same structure as JSON
+	docs := struct {
+		Documents []struct {
+			Index           int    `yaml:"index"`
+			Source          string `yaml:"source"`
+			DocumentContent string `yaml:"document_content"`
+		} `yaml:"documents"`
+	}{}
+
+	// Convert the input to []FileContent
+	contents, ok := output.([]FileContent)
+	if !ok {
+		return &MixError{Message: "invalid input type for YAML generation"}
+	}
+
+	// Fill the structure
+	docs.Documents = make([]struct {
+		Index           int    `yaml:"index"`
+		Source          string `yaml:"source"`
+		DocumentContent string `yaml:"document_content"`
+	}, len(contents))
+
+	for i, content := range contents {
+		docs.Documents[i] = struct {
+			Index           int    `yaml:"index"`
+			Source          string `yaml:"source"`
+			DocumentContent string `yaml:"document_content"`
+		}{
+			Index:           i + 1,
+			Source:          content.Path,
+			DocumentContent: content.Content,
+		}
+	}
+
 	encoder := yaml.NewEncoder(file)
 	encoder.SetIndent(2)
-	if err := encoder.Encode(output); err != nil {
+	if err := encoder.Encode(docs); err != nil {
 		return &MixError{Message: fmt.Sprintf("error encoding YAML: %v", err)}
 	}
 	return nil

@@ -20,12 +20,13 @@ const (
 
 // MixOptions represents configuration options for the mixer
 type MixOptions struct {
-	InputPath   string     // Directory to process
-	OutputPath  string     // Output file path
-	Pattern     string     // Comma-separated file matching patterns
-	Exclude     string     // Comma-separated exclusion patterns
-	MaxFileSize int64      // Maximum total size in bytes
-	OutputType  OutputType // Type of output format
+	InputPath     string     // Directory to process
+	OutputPath    string     // Output file path
+	Pattern       string     // Comma-separated file matching patterns
+	Exclude       string     // Comma-separated exclusion patterns
+	MaxFileSize   int64      // Maximum size for individual input files
+	MaxOutputSize int64      // Maximum size for the output file
+	OutputType    OutputType // Type of output format
 }
 
 // MixError represents an error that occurred during mixing
