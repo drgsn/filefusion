@@ -25,6 +25,7 @@ var (
 	exclude       string // Patterns to exclude (comma-separated)
 	maxFileSize   string // Maximum size limit for individual files
 	maxOutputSize string // Maximum size limit for the output file
+	dryRun        bool   // Show the list of files that will be processed
 )
 
 // rootCmd represents the base command when called without any subcommands.
@@ -46,6 +47,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&exclude, "exclude", "e", "", "comma-separated patterns to exclude (e.g., 'build/**,*.jar')")
 	rootCmd.PersistentFlags().StringVar(&maxFileSize, "max-file-size", "10MB", "maximum size for individual input files")
 	rootCmd.PersistentFlags().StringVar(&maxOutputSize, "max-output-size", "50MB", "maximum size for the output file")
+	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Show the list of files that will be processed")
 }
 
 // main is the entry point of the application.
@@ -168,6 +170,17 @@ func runMix(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Processing %s:\n", inputPath)
 		fmt.Printf("Found %d files matching pattern\n", len(files))
 		fmt.Printf("Total size: %s\n", formatSize(totalSize))
+
+		// Display list of matched files
+		fmt.Println("\nMatched files:")
+		for _, file := range files {
+			fmt.Printf("- %s (%s)\n", file.Path, formatSize(file.Size))
+		}
+
+		if dryRun {
+			fmt.Println("\nDry run complete. No files will be processed.")
+			return nil
+		}
 
 		// Validate total size against limit
 		if totalSize > maxOutputSizeBytes {

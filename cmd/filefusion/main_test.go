@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +28,7 @@ It preserves file metadata and structures the output in an XML-like or JSON form
 	rootCmd.PersistentFlags().StringVarP(&exclude, "exclude", "e", "", "exclude patterns")
 	rootCmd.PersistentFlags().StringVar(&maxFileSize, "max-file-size", "10MB", "maximum size for individual input files")
 	rootCmd.PersistentFlags().StringVar(&maxOutputSize, "max-output-size", "50MB", "maximum size for output file")
+	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Show the list of files that will be processed")
 }
 
 func TestDeriveOutputPath(t *testing.T) {
@@ -849,5 +852,100 @@ func TestSizeLimits(t *testing.T) {
 				t.Errorf("Expected %d files in output, got %d", tt.expectedFiles, docCount)
 			}
 		})
+	}
+}
+
+func TestDryRun(t *testing.T) {
+	// Create a temporary directory for test files
+	tmpDir, err := os.MkdirTemp("", "filefusion-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create test files
+	testFiles := []struct {
+		name    string
+		content string
+	}{
+		{"test1.go", "package main"},
+		{"test2.go", "package test"},
+		{"ignore.txt", "ignored file"},
+	}
+
+	for _, tf := range testFiles {
+		path := filepath.Join(tmpDir, tf.name)
+		if err := os.WriteFile(path, []byte(tf.content), 0644); err != nil {
+			t.Fatalf("Failed to create test file: %v", err)
+		}
+	}
+
+	// Set up the output file path
+	outputPath := filepath.Join(tmpDir, "output.xml")
+
+	// Capture stdout
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	// Set up command line arguments
+	setupRootCmd()
+	rootCmd.SetArgs([]string{
+		"--pattern", "*.go",
+		"--output", outputPath,
+		"--dry-run=true",
+		tmpDir,
+	})
+
+	// Run the command
+	err = rootCmd.Execute()
+
+	// Restore stdout
+	w.Close()
+	os.Stdout = oldStdout
+
+	// Read captured output
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// Verify results
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
+
+	// Check that output file was not created
+	if _, err := os.Stat(outputPath); !os.IsNotExist(err) {
+		t.Error("Output file should not exist in dry-run mode")
+	}
+
+	// Verify output contains expected information
+	expectedStrings := []string{
+		"Found 2 files matching pattern",
+		fmt.Sprintf("Processing %s:", tmpDir),
+		"test1.go",
+		"test2.go",
+		"Matched files:",
+		"Dry run complete",
+	}
+
+	for _, exp := range expectedStrings {
+		if !strings.Contains(output, exp) {
+			t.Errorf("Expected output to contain '%s', got output:\n%s", exp, output)
+		}
+	}
+
+	// Instead of checking exact file sizes, verify size information is present
+	for _, tf := range testFiles {
+		if strings.HasSuffix(tf.name, ".go") {
+			if !strings.Contains(output, fmt.Sprintf("- %s (", tf.name)) {
+				t.Errorf("Expected output to contain file '%s' with size, got output:\n%s", tf.name, output)
+			}
+		}
+	}
+
+	// Verify ignored file is not mentioned
+	if strings.Contains(output, "ignore.txt") {
+		t.Error("Output should not contain ignored file")
 	}
 }
