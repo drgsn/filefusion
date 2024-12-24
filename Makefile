@@ -21,7 +21,7 @@ TARGETOS?=linux
 TARGETARCH?=amd64
 
 # Install path
-INSTALL_PATH?=/usr/local/bin
+INSTALL_PATH=$(HOME)/.filefusion
 
 .PHONY: all build clean install uninstall test test-coverage lint fmt check docs run help
 
@@ -54,13 +54,14 @@ build-windows:
 # Install the binary
 install: build
 	@echo "Installing to $(INSTALL_PATH)..."
-	@sudo rm -f $(INSTALL_PATH)/$(BINARY_NAME)
-	@sudo install -m 755 $(GOBIN)/$(BINARY_NAME) $(INSTALL_PATH)/$(BINARY_NAME)
+	@mkdir -p $(INSTALL_PATH)
+	@install -m 755 $(GOBIN)/$(BINARY_NAME) $(INSTALL_PATH)/$(BINARY_NAME)
 
 # Uninstall the binary
 uninstall:
 	@echo "Uninstalling from $(INSTALL_PATH)..."
 	@rm -f $(INSTALL_PATH)/$(BINARY_NAME)
+	@rmdir --ignore-fail-on-non-empty $(INSTALL_PATH)
 
 # Clean build directory
 clean:

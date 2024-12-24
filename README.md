@@ -56,6 +56,7 @@ Or download the latest binary for your platform from the [releases page](https:/
 -   **Max Output Size**: 50MB
 -   **Output Format**: XML (when not specified)
 -   **Exclude**: none by default
+-   **Dry Run**: disabled by default. Show the list of files that will be processed.
 
 ## Basic Usage
 
