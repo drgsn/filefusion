@@ -17,15 +17,34 @@ FileFusion is a powerful command-line tool designed to concatenate and process f
 
 ## Installation
 
-If you have Go installed, you can install FileFusion directly:
+### Quick Install (Recommended)
 
+Using curl:
+```bash
+curl -fsSL https://raw.githubusercontent.com/drgsn/filefusion/main/install.sh | bash
+```
+
+Using wget:
+```bash
+wget -qO- https://raw.githubusercontent.com/drgsn/filefusion/main/install.sh | bash
+```
+
+For users who prefer to inspect the script before running (recommended security practice):
+```bash
+curl -fsSL https://raw.githubusercontent.com/drgsn/filefusion/main/install.sh > install.sh
+chmod +x install.sh
+./install.sh
+```
+
+### Alternative Installation Methods
+
+If you have Go installed, you can install FileFusion directly:
 ```bash
 go install github.com/drgsn/filefusion/cmd/filefusion@latest
 ```
 
-or 
+Or download the latest binary for your platform from the [releases page](https://github.com/drgsn/filefusion/releases).
 
-Download the latest binary for your platform from the [releases page](https://github.com/drgsn/filefusion/releases).
 
 ## Default Values
 
