@@ -102,7 +102,6 @@ func TestKotlinLoggingCalls(t *testing.T) {
 			defer tree.Close()
 
 			node := tree.RootNode()
-			t.Logf("Full AST:\n%s", tree.RootNode().String())
 
 			var callNode *sitter.Node
 			var findCall func(*sitter.Node)
@@ -248,7 +247,6 @@ func TestKotlinGetterSetter(t *testing.T) {
 			defer tree.Close()
 
 			node := tree.RootNode()
-			t.Logf("Full AST:\n%s", tree.RootNode().String())
 			var targetNode *sitter.Node
 			var findNode func(*sitter.Node)
 			findNode = func(n *sitter.Node) {
