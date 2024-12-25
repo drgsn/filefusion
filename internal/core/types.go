@@ -1,5 +1,7 @@
 package core
 
+import "github.com/drgsn/filefusion/internal/core/cleaner"
+
 // FileContent encapsulates both the content and metadata of a processed file.
 // This structure is used to pass file information between different components
 // of the system and ultimately to generate the output.
@@ -75,6 +77,9 @@ type MixOptions struct {
 	// OutputType determines the format of the output file.
 	// Should be one of OutputTypeXML, OutputTypeJSON, or OutputTypeYAML.
 	OutputType OutputType
+
+	// CleanerOptions is the configuration for the code cleaner.
+	CleanerOptions *cleaner.CleanerOptions
 }
 
 // MixError represents an error that occurred during the mixing process.

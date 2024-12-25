@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/drgsn/filefusion/internal/core/cleaner"
 )
 
 // FileResult represents the outcome of processing a single file.
@@ -16,31 +18,27 @@ type FileResult struct {
 }
 
 // FileProcessor handles the concurrent processing of multiple files,
-// reading their contents and collecting metadata while respecting size limits
-// and other constraints specified in the options.
+// including content cleaning when enabled. It manages a pool of cleaners
+// for different languages and ensures proper resource cleanup.
 type FileProcessor struct {
-	options *MixOptions
+	options  *MixOptions
+	cleaners map[cleaner.Language]*cleaner.Cleaner
+	mu       sync.RWMutex
 }
 
 // NewFileProcessor creates a new FileProcessor instance with the specified options.
-//
-// Parameters:
-//   - options: Configuration settings for file processing
-//
-// Returns:
-//   - A new FileProcessor instance
+// It initializes the cleaner map if cleaning is enabled but defers actual cleaner
+// creation until needed.
 func NewFileProcessor(options *MixOptions) *FileProcessor {
-	return &FileProcessor{options: options}
+	return &FileProcessor{
+		options:  options,
+		cleaners: make(map[cleaner.Language]*cleaner.Cleaner),
+	}
 }
 
 // ProcessFiles processes multiple files concurrently using a worker pool pattern.
 // It respects file size limits and handles errors gracefully, continuing to process
 // files even if some fail.
-//
-// The function implements a concurrent processing model where:
-// - Multiple worker goroutines process files simultaneously
-// - Results are collected in order of completion
-// - Errors are collected but don't stop the overall processing
 //
 // Parameters:
 //   - paths: Slice of file paths to process
@@ -49,7 +47,8 @@ func NewFileProcessor(options *MixOptions) *FileProcessor {
 //   - []FileContent: Slice of successfully processed file contents
 //   - error: First error encountered during processing, if any
 func (p *FileProcessor) ProcessFiles(paths []string) ([]FileContent, error) {
-	numWorkers := min(len(paths), 10) // Limit concurrent workers
+	// Use reasonable number of workers
+	numWorkers := min(len(paths), 10)
 	results := make(chan FileResult, len(paths))
 	var wg sync.WaitGroup
 
@@ -87,7 +86,7 @@ func (p *FileProcessor) ProcessFiles(paths []string) ([]FileContent, error) {
 			errors = append(errors, result.Error)
 			continue
 		}
-		if result.Content.Size > 0 && result.Content.Size <= p.options.MaxFileSize {
+		if result.Content.Size > 0 {
 			contents = append(contents, result.Content)
 		}
 	}
@@ -101,19 +100,10 @@ func (p *FileProcessor) ProcessFiles(paths []string) ([]FileContent, error) {
 	return contents, firstError
 }
 
-// processFile handles the processing of a single file, including:
-// - Reading file content
-// - Collecting metadata
-// - Handling paths relative to the input directory
-// - Validating file size constraints
-//
-// Parameters:
-//   - path: Path to the file to process
-//
-// Returns:
-//   - FileResult containing either the processed content or an error
+// processFile handles the processing of a single file, including reading,
+// cleaning (if enabled), and metadata collection.
 func (p *FileProcessor) processFile(path string) FileResult {
-	// Get file info
+	// Get file info and perform initial checks
 	info, err := os.Stat(path)
 	if err != nil {
 		return FileResult{
@@ -124,7 +114,6 @@ func (p *FileProcessor) processFile(path string) FileResult {
 		}
 	}
 
-	// Check if it's a directory
 	if info.IsDir() {
 		return FileResult{
 			Error: &MixError{
@@ -134,11 +123,11 @@ func (p *FileProcessor) processFile(path string) FileResult {
 		}
 	}
 
-	// Skip if file is too large
+	// Check size limit
 	if info.Size() > p.options.MaxFileSize {
 		fmt.Fprintf(os.Stderr, "Warning: Skipping %s (size %d bytes exceeds limit %d bytes)\n",
 			path, info.Size(), p.options.MaxFileSize)
-		return FileResult{} // Return empty result for skipped files
+		return FileResult{}
 	}
 
 	// Read file content
@@ -152,7 +141,80 @@ func (p *FileProcessor) processFile(path string) FileResult {
 		}
 	}
 
-	// Calculate relative path from input directory
+	// Clean content if enabled and language is supported
+	if p.options.CleanerOptions != nil {
+		if cleaned, err := p.cleanContent(path, content); err == nil {
+			content = cleaned
+		} else {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to clean %s: %v\n", path, err)
+		}
+	}
+
+	// Create relative path
+	relPath, err := p.createRelativePath(path)
+	if err != nil {
+		relPath = path
+	}
+
+	// Return successful result
+	return FileResult{
+		Content: FileContent{
+			Path:      filepath.ToSlash(relPath),
+			Name:      filepath.Base(path),
+			Extension: strings.TrimPrefix(filepath.Ext(path), "."),
+			Content:   string(content),
+			Size:      int64(len(content)),
+		},
+	}
+}
+
+// cleanContent attempts to clean the content using the appropriate language cleaner
+func (p *FileProcessor) cleanContent(path string, content []byte) ([]byte, error) {
+	lang := p.detectLanguage(path)
+	if lang == "" {
+		return content, nil
+	}
+
+	c, err := p.getOrCreateCleaner(lang)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.Clean(content)
+}
+
+// getOrCreateCleaner safely gets or creates a cleaner for the given language
+func (p *FileProcessor) getOrCreateCleaner(lang cleaner.Language) (*cleaner.Cleaner, error) {
+	// Try to get existing cleaner
+	p.mu.RLock()
+	c, exists := p.cleaners[lang]
+	p.mu.RUnlock()
+
+	if exists {
+		return c, nil
+	}
+
+	// Create new cleaner if needed
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Check again in case another goroutine created it
+	if c, exists = p.cleaners[lang]; exists {
+		return c, nil
+	}
+
+	// Create new cleaner
+	c, err := cleaner.NewCleaner(lang, p.options.CleanerOptions)
+	if err != nil {
+		return nil, err
+	}
+
+	p.cleaners[lang] = c
+	return c, nil
+}
+
+// createRelativePath creates a path relative to the input directory
+func (p *FileProcessor) createRelativePath(path string) (string, error) {
 	baseDir := filepath.Clean(p.options.InputPath)
 	cleanPath := filepath.Clean(path)
 
@@ -167,16 +229,59 @@ func (p *FileProcessor) processFile(path string) FileResult {
 		relPath = strings.TrimPrefix(relPath, "/")
 	}
 
-	// Return successful result with file content and metadata
-	return FileResult{
-		Content: FileContent{
-			Path:      relPath,
-			Name:      filepath.Base(path),
-			Extension: strings.TrimPrefix(filepath.Ext(path), "."),
-			Content:   string(content),
-			Size:      info.Size(),
-		},
+	return relPath, nil
+}
+
+// detectLanguage determines the language based on file extension
+func (p *FileProcessor) detectLanguage(path string) cleaner.Language {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".go":
+		return cleaner.LangGo
+	case ".java":
+		return cleaner.LangJava
+	case ".py":
+		return cleaner.LangPython
+	case ".js":
+		return cleaner.LangJavaScript
+	case ".ts":
+		return cleaner.LangTypeScript
+	case ".html":
+		return cleaner.LangHTML
+	case ".css":
+		return cleaner.LangCSS
+	case ".cpp", ".cc", ".h":
+		return cleaner.LangCPP
+	case ".cs":
+		return cleaner.LangCSharp
+	case ".php":
+		return cleaner.LangPHP
+	case ".rb":
+		return cleaner.LangRuby
+	case ".sh", ".bash":
+		return cleaner.LangBash
+	case ".swift":
+		return cleaner.LangSwift
+	case ".kt":
+		return cleaner.LangKotlin
+	case ".sql":
+		return cleaner.LangSQL
 	}
+	return ""
+}
+
+// Close cleans up all resources used by the processor.
+// This should be called when the processor is no longer needed.
+func (p *FileProcessor) Close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for _, c := range p.cleaners {
+		if c != nil {
+			c.Close()
+		}
+	}
+	p.cleaners = nil
 }
 
 // min returns the smaller of two integers.
