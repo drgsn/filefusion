@@ -65,13 +65,14 @@ func (h *JavaHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
 		return false
 	}
 	name := string(content[nameNode.StartByte():nameNode.EndByte()])
+	nameLower := strings.ToLower(name)
 
-	// Check for getter pattern
-	isGetter := strings.HasPrefix(strings.ToLower(name), "get") &&
+	// Check for getter pattern (including boolean getters with 'is' prefix)
+	isGetter := (strings.HasPrefix(nameLower, "get") || strings.HasPrefix(nameLower, "is")) &&
 		strings.Contains(methodText, "return")
 
 	// Check for setter pattern
-	isSetter := strings.HasPrefix(strings.ToLower(name), "set") &&
+	isSetter := strings.HasPrefix(nameLower, "set") &&
 		strings.Contains(methodText, "void")
 
 	return isGetter || isSetter

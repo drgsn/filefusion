@@ -13,11 +13,11 @@ type JavaScriptHandler struct {
 }
 
 func (h *JavaScriptHandler) GetCommentTypes() []string {
-	return []string{"comment", "hash_bang_line"}
+	return []string{"comment", "multiline_comment"}
 }
 
 func (h *JavaScriptHandler) GetImportTypes() []string {
-	return []string{"import_statement", "require_call"}
+	return []string{"import_statement", "import_specifier"}
 }
 
 func (h *JavaScriptHandler) GetDocCommentPrefix() string {

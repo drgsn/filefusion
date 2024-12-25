@@ -35,3 +35,15 @@ func (h *BaseHandler) IsMethodNamed(node *sitter.Node, content []byte, prefix st
 	name := string(content[nameNode.StartByte():nameNode.EndByte()])
 	return strings.HasPrefix(strings.ToLower(name), strings.ToLower(prefix))
 }
+
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, v := range a {
+		if v != b[i] {
+			return false
+		}
+	}
+	return true
+}

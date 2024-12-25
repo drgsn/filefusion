@@ -6,7 +6,6 @@ import (
 	sitter "github.com/smacker/go-tree-sitter"
 )
 
-// BashHandler handles Bash script specifics
 type BashHandler struct {
 	BaseHandler
 }
@@ -24,17 +23,32 @@ func (h *BashHandler) GetDocCommentPrefix() string {
 }
 
 func (h *BashHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
-	if node.Type() != "command" {
+	if node == nil {
+		return false
+	}
+
+	nodeType := node.Type()
+	if nodeType == "redirected_statement" {
+		// If it's a redirected statement, it's a logging call
+		return true
+	}
+
+	if nodeType != "command" {
+		return false
+	}
+
+	// Get the full command text for other checks
+	if node.StartByte() >= uint32(len(content)) || node.EndByte() > uint32(len(content)) {
 		return false
 	}
 	cmdText := string(content[node.StartByte():node.EndByte()])
+
+	// Check for logging commands
 	return strings.Contains(cmdText, "logger") ||
-		strings.Contains(cmdText, ">&2") ||
 		strings.Contains(cmdText, "echo \"Debug") ||
 		strings.Contains(cmdText, "printf \"Debug")
 }
 
 func (h *BashHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
-	// Bash doesn't have traditional getters/setters
 	return false
 }

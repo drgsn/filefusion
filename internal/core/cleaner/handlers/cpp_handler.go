@@ -7,7 +7,6 @@ import (
 	sitter "github.com/smacker/go-tree-sitter"
 )
 
-// CPPHandler handles C/C++ language specifics
 type CPPHandler struct {
 	BaseHandler
 }
@@ -25,7 +24,10 @@ func (h *CPPHandler) GetDocCommentPrefix() string {
 }
 
 func (h *CPPHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
-	if node.Type() != "call_expression" && node.Type() != "binary_expression" {
+	if node == nil || (node.Type() != "call_expression" && node.Type() != "binary_expression") {
+		return false
+	}
+	if node.StartByte() >= uint32(len(content)) || node.EndByte() > uint32(len(content)) {
 		return false
 	}
 	callText := content[node.StartByte():node.EndByte()]
@@ -38,34 +40,26 @@ func (h *CPPHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
 }
 
 func (h *CPPHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
-	if node.Type() != "function_definition" && node.Type() != "function_declarator" {
+	if node == nil || (node.Type() != "function_definition" && node.Type() != "function_declarator") {
 		return false
 	}
-
-	// Check for function name patterns
+	if node.StartByte() >= uint32(len(content)) || node.EndByte() > uint32(len(content)) {
+		return false
+	}
 	funcText := string(content[node.StartByte():node.EndByte()])
 
-	// Common getter/setter patterns in C++
-	isGetter := strings.Contains(funcText, "get") ||
-		strings.Contains(funcText, "Get") ||
-		strings.Contains(funcText, "is") ||
-		strings.Contains(funcText, "Is")
-
+	isGetter := (strings.Contains(strings.ToLower(funcText), "get") && !strings.Contains(strings.ToLower(funcText), "getvalue")) ||
+		(strings.Contains(strings.ToLower(funcText), "is") && !strings.Contains(strings.ToLower(funcText), "isvalue"))
 	isSetter := strings.Contains(funcText, "set") ||
 		strings.Contains(funcText, "Set")
 
-	// Check function body or prototype for typical getter/setter patterns
 	if isGetter {
-		// Getters typically return a value and have no parameters
 		return !strings.Contains(funcText, "void") &&
 			strings.Count(funcText, ",") == 0
 	}
-
 	if isSetter {
-		// Setters typically return void and have exactly one parameter
 		return strings.Contains(funcText, "void") &&
-			strings.Count(funcText, ",") == 0
+			strings.Count(funcText, ",") <= 1
 	}
-
 	return false
 }

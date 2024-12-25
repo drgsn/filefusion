@@ -25,20 +25,32 @@ func (h *RubyHandler) GetDocCommentPrefix() string {
 }
 
 func (h *RubyHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
-	if node.Type() != "method_call" {
+	if node == nil || len(content) == 0 {
 		return false
 	}
+
+	nodeType := node.Type()
+	if nodeType != "call" && nodeType != "method_call" && nodeType != "command" {
+		return false
+	}
+
 	callText := content[node.StartByte():node.EndByte()]
 	return bytes.HasPrefix(callText, []byte("puts ")) ||
 		bytes.HasPrefix(callText, []byte("print ")) ||
 		bytes.HasPrefix(callText, []byte("p ")) ||
-		bytes.HasPrefix(callText, []byte("logger."))
+		bytes.Contains(callText, []byte("logger."))
 }
 
 func (h *RubyHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
-	if node.Type() != "call" && node.Type() != "method" {
+	if node == nil || len(content) == 0 {
 		return false
 	}
+
+	nodeType := node.Type()
+	if nodeType != "call" && nodeType != "method" && nodeType != "method_definition" {
+		return false
+	}
+
 	methodText := string(content[node.StartByte():node.EndByte()])
 	return strings.Contains(methodText, "attr_reader") ||
 		strings.Contains(methodText, "attr_writer") ||
