@@ -85,23 +85,49 @@ func main() {
 }
 
 // runMix implements the main program logic
+// In cmd/filefusion/main.go, modify the runMix function:
+
 func runMix(cmd *cobra.Command, args []string) error {
-	args, err := validateAndGetPaths(args)
-	if err != nil {
-		return err
-	}
+    // Validate pattern first
+    if pattern == "" {
+        return fmt.Errorf("pattern cannot be empty")
+    }
 
-	sizeLimits, err := parseSizeLimits()
-	if err != nil {
-		return err
-	}
+    // Add pattern validation
+    if err := validatePattern(pattern); err != nil {
+        return err
+    }
 
-	outputType, err := validateOutputType()
-	if err != nil {
-		return err
-	}
+    args, err := validateAndGetPaths(args)
+    if err != nil {
+        return err
+    }
 
-	return processInputPaths(args, sizeLimits, outputType)
+    sizeLimits, err := parseSizeLimits()
+    if err != nil {
+        return err
+    }
+
+    outputType, err := validateOutputType()
+    if err != nil {
+        return err
+    }
+
+    return processInputPaths(args, sizeLimits, outputType)
+}
+
+func validatePattern(pattern string) error {
+    patterns := strings.Split(pattern, ",")
+    for _, p := range patterns {
+        p = strings.TrimSpace(p)
+        if p == "" {
+            continue
+        }
+        if _, err := filepath.Match(p, "test"); err != nil {
+            return fmt.Errorf("syntax error in pattern %q: %w", p, err)
+        }
+    }
+    return nil
 }
 
 // validateAndGetPaths validates input paths and returns them
@@ -113,11 +139,6 @@ func validateAndGetPaths(args []string) ([]string, error) {
 		}
 		args = []string{currentDir}
 	}
-
-	if pattern == "" {
-		return nil, fmt.Errorf("pattern cannot be empty")
-	}
-
 	return args, nil
 }
 
