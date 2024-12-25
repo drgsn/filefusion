@@ -290,10 +290,3 @@ func (c *Cleaner) CleanFile(r io.Reader, w io.Writer) error {
 	_, err = w.Write(cleaned)
 	return err
 }
-
-// Close cleans up resources used by the cleaner
-func (c *Cleaner) Close() {
-	if c.parser != nil {
-		c.parser = nil
-	}
-}

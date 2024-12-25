@@ -69,8 +69,6 @@ func (m *Mixer) Mix() error {
 
 	// Process discovered files to extract their content
 	processor := NewFileProcessor(m.options)
-	defer processor.Close() // Ensure cleanup
-
 	contents, err := processor.ProcessFiles(files)
 	if err != nil {
 		return fmt.Errorf("error processing files: %w", err)

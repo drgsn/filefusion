@@ -270,20 +270,6 @@ func (p *FileProcessor) detectLanguage(path string) cleaner.Language {
 	return ""
 }
 
-// Close cleans up all resources used by the processor.
-// This should be called when the processor is no longer needed.
-func (p *FileProcessor) Close() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	for _, c := range p.cleaners {
-		if c != nil {
-			c.Close()
-		}
-	}
-	p.cleaners = nil
-}
-
 // min returns the smaller of two integers.
 // This helper function is used to limit the number of concurrent workers.
 func min(a, b int) int {

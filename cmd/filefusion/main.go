@@ -246,7 +246,12 @@ func deriveOutputPath(inputPath string) string {
 func displaySummary(inputPath string, files []FileInfo, totalSize int64) error {
 	fmt.Printf("Processing %s:\n", inputPath)
 	fmt.Printf("Found %d files matching pattern\n", len(files))
-	fmt.Printf("Total size: %s\n", formatSize(totalSize))
+	if cleanEnabled {
+		fmt.Printf("Uncompressed size: %s\n", formatSize(totalSize))
+		fmt.Printf("Final size (with --clean): will be calculated after processing\n")
+	} else {
+		fmt.Printf("Total size: %s\n", formatSize(totalSize))
+	}
 
 	fmt.Println("\nMatched files:")
 	for _, file := range files {
@@ -268,7 +273,13 @@ func finalizeProcessing(options *core.MixOptions, files []FileInfo, totalSize in
 		return fmt.Errorf("error mixing %s: %w", options.InputPath, err)
 	}
 
-	fmt.Printf("Successfully created %s\n\n", options.OutputPath)
+	// Display final size if clean is enabled
+	if cleanEnabled {
+		if info, err := os.Stat(options.OutputPath); err == nil {
+			fmt.Printf("\nFinal size (with --clean): %s\n", formatSize(info.Size()))
+		}
+	}
+
 	return nil
 }
 
