@@ -11,6 +11,7 @@ FileFusion is a powerful command-line tool designed to concatenate and process f
 -   Powerful file pattern matching and exclusion
 -   Concurrent file processing for better performance
 -   Size limits for both individual files and total output
+-   Detailed size reporting (uncompressed and final sizes with --clean)
 -   Preserves file metadata and structure
 -   Safe file handling with atomic writes
 -   Cross-platform compatibility
@@ -178,8 +179,28 @@ filefusion --max-file-size 20MB /path/to/project
 # Increase total output size limit to 100MB
 filefusion --max-output-size 100MB /path/to/project
 
-# Set both limits
-filefusion --max-file-size 20MB --max-output-size 100MB /path/to/project
+# Set both limits and enable cleaning to see size reduction
+filefusion --max-file-size 20MB --max-output-size 100MB --clean /path/to/project
+```
+
+When using the `--clean` flag, FileFusion will show both:
+
+-   The uncompressed size (before cleaning)
+-   The final size (after cleaning)
+
+Example output with `--clean`:
+
+```
+Processing /path/to/project:
+Found 10 files matching pattern
+Uncompressed size: 1.2MB
+Final size (with --clean): will be calculated after processing
+
+Matched files:
+- src/main.go (500KB)
+- src/utils.go (700KB)
+
+Final size (with --clean): 800KB
 ```
 
 Size limits accept suffixes:
@@ -233,6 +254,92 @@ filefusion \
   --max-file-size 10MB \
   --max-output-size 100MB \
   --output project-analysis.xml \
+  /path/to/project
+```
+
+### Code Cleaning and Size Optimization
+
+```bash
+# Clean and optimize a Go project
+filefusion \
+  --pattern "*.go" \
+  --exclude "*_test.go" \
+  --clean \
+  --clean-remove-comments \
+  --clean-remove-logging \
+  --output optimized.xml \
+  /path/to/go/project
+
+# Clean TypeScript/JavaScript with preserved documentation
+filefusion \
+  --pattern "*.ts,*.js" \
+  --clean \
+  --clean-preserve-doc-comments \
+  --clean-remove-logging \
+  --clean-optimize-whitespace \
+  --output web-optimized.xml \
+  /path/to/web/project
+
+# Maximum cleaning for size reduction
+filefusion \
+  --pattern "*.go,*.js,*.py" \
+  --clean \
+  --clean-remove-comments \
+  --clean-remove-imports \
+  --clean-remove-logging \
+  --clean-remove-getters-setters \
+  --clean-optimize-whitespace \
+  --clean-remove-empty-lines \
+  --output minimal-size.xml \
+  /path/to/project
+
+# Clean with size monitoring
+filefusion \
+  --pattern "*.{go,js,py,java}" \
+  --clean \
+  --clean-remove-comments \
+  --clean-optimize-whitespace \
+  --max-file-size 20MB \
+  --max-output-size 100MB \
+  --output monitored-clean.xml \
+  /path/to/project
+```
+
+### Combining Features
+
+```bash
+# Clean code and monitor size in multiple directories
+filefusion \
+  --pattern "*.{go,js,ts}" \
+  --exclude "**/{test,tests,vendor}/**" \
+  --clean \
+  --clean-remove-comments \
+  --clean-preserve-doc-comments \
+  --clean-optimize-whitespace \
+  /path/to/project1 /path/to/project2
+
+# Process large codebase with size optimization
+filefusion \
+  --pattern "*.{go,js,ts,py,java,cpp,h}" \
+  --exclude "**/{test,build,dist,vendor}/**" \
+  --clean \
+  --clean-remove-comments \
+  --clean-optimize-whitespace \
+  --max-file-size 50MB \
+  --max-output-size 500MB \
+  --output large-project.xml \
+  /path/to/large/project
+
+# Documentation-preserving clean with size monitoring
+filefusion \
+  --pattern "*.{go,js,py}" \
+  --exclude "**/vendor/**" \
+  --clean \
+  --clean-preserve-doc-comments \
+  --clean-remove-logging \
+  --clean-optimize-whitespace \
+  --max-file-size 10MB \
+  --output docs-preserved.xml \
   /path/to/project
 ```
 

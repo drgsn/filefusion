@@ -41,3 +41,6 @@ __debug_bin
 build/
 dist/
 coverage/
+coverage.txt
+coverage.xml
+coverage.html

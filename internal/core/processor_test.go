@@ -1,10 +1,15 @@
 package core
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/drgsn/filefusion/internal/core/cleaner"
 )
 
 func TestFileProcessor(t *testing.T) {
@@ -288,5 +293,195 @@ func TestProcessorEdgeCases(t *testing.T) {
 
 	if len(contents) != 3 {
 		t.Errorf("Expected 3 processed files, got %d", len(contents))
+	}
+}
+
+func TestLanguageDetection(t *testing.T) {
+	processor := NewFileProcessor(&MixOptions{})
+
+	tests := []struct {
+		path     string
+		expected cleaner.Language
+	}{
+		{"test.go", cleaner.LangGo},
+		{"test.java", cleaner.LangJava},
+		{"test.py", cleaner.LangPython},
+		{"test.js", cleaner.LangJavaScript},
+		{"test.ts", cleaner.LangTypeScript},
+		{"test.html", cleaner.LangHTML},
+		{"test.css", cleaner.LangCSS},
+		{"test.cpp", cleaner.LangCPP},
+		{"test.cc", cleaner.LangCPP},
+		{"test.h", cleaner.LangCPP},
+		{"test.cs", cleaner.LangCSharp},
+		{"test.php", cleaner.LangPHP},
+		{"test.rb", cleaner.LangRuby},
+		{"test.sh", cleaner.LangBash},
+		{"test.bash", cleaner.LangBash},
+		{"test.swift", cleaner.LangSwift},
+		{"test.kt", cleaner.LangKotlin},
+		{"test.sql", cleaner.LangSQL},
+		{"test.txt", ""},                // Unsupported extension
+		{"test", ""},                    // No extension
+		{"test.JAVA", cleaner.LangJava}, // Test case insensitivity
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := processor.detectLanguage(tt.path)
+			if got != tt.expected {
+				t.Errorf("detectLanguage(%q) = %v, want %v", tt.path, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCleanerCaching(t *testing.T) {
+	processor := NewFileProcessor(&MixOptions{
+		CleanerOptions: &cleaner.CleanerOptions{},
+	})
+
+	// First call should create a new cleaner
+	c1, err := processor.getOrCreateCleaner(cleaner.LangGo)
+	if err != nil {
+		t.Fatalf("Failed to create first cleaner: %v", err)
+	}
+
+	// Second call should return the same cleaner
+	c2, err := processor.getOrCreateCleaner(cleaner.LangGo)
+	if err != nil {
+		t.Fatalf("Failed to get cached cleaner: %v", err)
+	}
+
+	if c1 != c2 {
+		t.Error("Expected same cleaner instance to be returned from cache")
+	}
+
+	// Test concurrent access
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c, err := processor.getOrCreateCleaner(cleaner.LangGo)
+			if err != nil {
+				t.Errorf("Concurrent cleaner access failed: %v", err)
+			}
+			if c != c1 {
+				t.Error("Got different cleaner instance in concurrent access")
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestWorkerPoolBehavior(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "filefusion-workers-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create test files
+	fileCount := 20
+	var paths []string
+	for i := 0; i < fileCount; i++ {
+		path := filepath.Join(tmpDir, fmt.Sprintf("test%d.txt", i))
+		if err := os.WriteFile(path, []byte("test content"), 0644); err != nil {
+			t.Fatalf("Failed to create test file: %v", err)
+		}
+		paths = append(paths, path)
+	}
+
+	processor := NewFileProcessor(&MixOptions{
+		InputPath:   tmpDir,
+		MaxFileSize: 1024,
+	})
+
+	start := time.Now()
+	contents, err := processor.ProcessFiles(paths)
+	duration := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("ProcessFiles failed: %v", err)
+	}
+
+	if len(contents) != fileCount {
+		t.Errorf("Expected %d processed files, got %d", fileCount, len(contents))
+	}
+
+	// Verify that processing was actually concurrent
+	// If it wasn't concurrent, it would take significantly longer
+	// This is a rough check and might need adjustment based on system performance
+	expectedMaxDuration := time.Second // Adjust based on reasonable expectations
+	if duration > expectedMaxDuration {
+		t.Errorf("Processing took too long (%v), suggesting lack of concurrency", duration)
+	}
+}
+
+func TestRelativePathCreation(t *testing.T) {
+	tests := []struct {
+		name         string
+		inputPath    string
+		filePath     string
+		expectedPath string
+		expectError  bool
+	}{
+		{
+			name:         "simple relative path",
+			inputPath:    "/base/dir",
+			filePath:     "/base/dir/file.txt",
+			expectedPath: "file.txt",
+		},
+		{
+			name:         "nested relative path",
+			inputPath:    "/base/dir",
+			filePath:     "/base/dir/nested/file.txt",
+			expectedPath: "nested/file.txt",
+		},
+		{
+			name:         "path with dots",
+			inputPath:    "/base/dir",
+			filePath:     "/base/dir/./nested/../file.txt",
+			expectedPath: "file.txt",
+		},
+		{
+			name:         "path outside input directory",
+			inputPath:    "/base/dir",
+			filePath:     "/other/dir/file.txt",
+			expectedPath: "/other/dir/file.txt",
+		},
+		{
+			name:         "input path with trailing slash",
+			inputPath:    "/base/dir/",
+			filePath:     "/base/dir/file.txt",
+			expectedPath: "file.txt",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			processor := NewFileProcessor(&MixOptions{
+				InputPath: tt.inputPath,
+			})
+
+			got, err := processor.createRelativePath(tt.filePath)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error, got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			if got != tt.expectedPath {
+				t.Errorf("createRelativePath() = %v, want %v", got, tt.expectedPath)
+			}
+		})
 	}
 }

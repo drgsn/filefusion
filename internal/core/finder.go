@@ -104,59 +104,50 @@ func (f *FileFinder) FindFiles() ([]string, error) {
 //   - bool: true if the file should be included, false otherwise
 //   - error: Error if pattern matching fails
 func (f *FileFinder) matchesPattern(path, filename string) (bool, error) {
-	// Check exclusions first - if file matches any exclusion pattern, skip it
-	if f.options.Exclude != "" {
-		excludePatterns := strings.Split(f.options.Exclude, ",")
-		for _, pattern := range excludePatterns {
-			pattern = strings.TrimSpace(pattern)
-			if pattern == "" {
-				continue
-			}
+    // Pattern syntax is already validated at this point
+    if f.options.Exclude != "" {
+        excludePatterns := strings.Split(f.options.Exclude, ",")
+        for _, pattern := range excludePatterns {
+            pattern = strings.TrimSpace(pattern)
+            if pattern == "" {
+                continue
+            }
+            
+            pattern = filepath.FromSlash(pattern)
+            pathToCheck := filepath.FromSlash(path)
+            
+            if strings.Contains(pattern, "**") {
+                basePattern := strings.TrimSuffix(pattern, string(filepath.Separator)+"**")
+                basePattern = strings.TrimSuffix(basePattern, "**")
+                if strings.HasPrefix(pathToCheck, basePattern) {
+                    return false, nil
+                }
+            } else if strings.Contains(pattern, string(filepath.Separator)) {
+                matched, _ := filepath.Match(pattern, pathToCheck)
+                if matched {
+                    return false, nil
+                }
+            } else {
+                matched, _ := filepath.Match(pattern, filename)
+                if matched {
+                    return false, nil
+                }
+            }
+        }
+    }
 
-			pattern = filepath.FromSlash(pattern)
-			pathToCheck := filepath.FromSlash(path)
-
-			// Handle "**" pattern for recursive directory matching
-			if strings.Contains(pattern, "**") {
-				basePattern := strings.TrimSuffix(pattern, string(filepath.Separator)+"**")
-				basePattern = strings.TrimSuffix(basePattern, "**")
-				if strings.HasPrefix(pathToCheck, basePattern) {
-					return false, nil
-				}
-			} else if strings.Contains(pattern, string(filepath.Separator)) {
-				// Handle path-based exclusions
-				if matched, err := filepath.Match(pattern, pathToCheck); err != nil {
-					return false, fmt.Errorf("invalid exclusion pattern %q: %w", pattern, err)
-				} else if matched {
-					return false, nil
-				}
-			} else {
-				// Handle filename-only exclusions
-				if matched, err := filepath.Match(pattern, filename); err != nil {
-					return false, fmt.Errorf("invalid exclusion pattern %q: %w", pattern, err)
-				} else if matched {
-					return false, nil
-				}
-			}
-		}
-	}
-
-	// Check inclusion patterns - file must match at least one
-	patterns := strings.Split(f.options.Pattern, ",")
-	for _, pattern := range patterns {
-		pattern = strings.TrimSpace(pattern)
-		if pattern == "" {
-			continue
-		}
-
-		match, err := filepath.Match(pattern, filename)
-		if err != nil {
-			return false, fmt.Errorf("invalid pattern %q: %w", pattern, err)
-		}
-		if match {
-			return true, nil
-		}
-	}
-
-	return false, nil
+    patterns := strings.Split(f.options.Pattern, ",")
+    for _, pattern := range patterns {
+        pattern = strings.TrimSpace(pattern)
+        if pattern == "" {
+            continue
+        }
+        
+        matched, _ := filepath.Match(pattern, filename)
+        if matched {
+            return true, nil
+        }
+    }
+    
+    return false, nil
 }

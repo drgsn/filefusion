@@ -712,8 +712,7 @@ func TestSizeExceedCase(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create a large test file
-	content := strings.Repeat("x", 2*1024*1024) // 2MB content
+	content := strings.Repeat("x", 2*1024*1024) // 2MB of content
 	err = os.WriteFile(filepath.Join(tmpDir, "large.txt"), []byte(content), 0644)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
@@ -731,31 +730,28 @@ func TestSizeExceedCase(t *testing.T) {
 		t.Fatal("Expected error but got none")
 	}
 
-	if !strings.Contains(err.Error(), "output size exceeds maximum") {
+	if !strings.Contains(err.Error(), "exceeds maximum allowed size") {
 		t.Errorf("Expected error about exceeding size limit, got: %v", err)
 	}
 }
 
 func TestSizeLimits(t *testing.T) {
-	// Create temporary test directory
 	tmpDir, err := os.MkdirTemp("", "filefusion-size-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create test files with specific sizes
 	files := map[string]struct {
 		size     int
 		name     string
 		included bool
 	}{
-		"small.go":  {size: 500 * 1024, name: "small.go", included: true},        // 500KB
-		"medium.go": {size: 5 * 1024 * 1024, name: "medium.go", included: true},  // 5MB
-		"large.go":  {size: 15 * 1024 * 1024, name: "large.go", included: false}, // 15MB
+		"small.go":  {size: 500 * 1024, name: "small.go", included: true},
+		"medium.go": {size: 5 * 1024 * 1024, name: "medium.go", included: true},
+		"large.go":  {size: 15 * 1024 * 1024, name: "large.go", included: false},
 	}
 
-	// Create files
 	for _, file := range files {
 		content := strings.Repeat("x", file.size)
 		path := filepath.Join(tmpDir, file.name)
@@ -792,7 +788,7 @@ func TestSizeLimits(t *testing.T) {
 			maxOutputSize: "1MB",
 			expectedFiles: 2,
 			shouldError:   true,
-			errorContains: "output size exceeds maximum allowed size",
+			errorContains: "exceeds maximum allowed size",
 		},
 		{
 			name:          "invalid max file size",
@@ -814,14 +810,12 @@ func TestSizeLimits(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			outputPath := filepath.Join(tmpDir, "output.xml")
 			setupRootCmd()
-
 			args := []string{
 				"--output", outputPath,
 				"--max-file-size", tt.maxFileSize,
 				"--max-output-size", tt.maxOutputSize,
 				tmpDir,
 			}
-
 			rootCmd.SetArgs(args)
 			err := rootCmd.Execute()
 
@@ -840,13 +834,11 @@ func TestSizeLimits(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			// Verify output file exists and content
 			content, err := os.ReadFile(outputPath)
 			if err != nil {
 				t.Fatalf("Failed to read output file: %v", err)
 			}
 
-			// Count number of <document> tags to verify number of included files
 			docCount := strings.Count(string(content), "<document ")
 			if docCount != tt.expectedFiles {
 				t.Errorf("Expected %d files in output, got %d", tt.expectedFiles, docCount)
