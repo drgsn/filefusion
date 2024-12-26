@@ -27,53 +27,55 @@
 ### Quick Install (Recommended)
 
 Using curl:
-\`\`\`bash
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/drgsn/filefusion/main/install.sh | bash
-\`\`\`
+```
 
 Using wget:
-\`\`\`bash
+
+```bash
 wget -qO- https://raw.githubusercontent.com/drgsn/filefusion/main/install.sh | bash
-\`\`\`
+```
 
 ### Safe Install (Recommended Security Practice)
 
-\`\`\`bash
-
+```bash
 # Download and inspect the script first
-
 curl -fsSL https://raw.githubusercontent.com/drgsn/filefusion/main/install.sh > install.sh
 chmod +x install.sh
 ./install.sh
-\`\`\`
+```
 
 ### Alternative Methods
 
 Using Go:
-\`\`\`bash
+
+```bash
 go install github.com/drgsn/filefusion/cmd/filefusion@latest
-\`\`\`
+```
 
 Or download the latest binary for your platform from the [releases page](https://github.com/drgsn/filefusion/releases).
 
 ## 📋 Default Values
 
-| Setting         | Default Value                | Description                |
-| --------------- | ---------------------------- | -------------------------- |
-| Pattern         | \`_.go,_.json,_.yaml,_.yml\` | Default file patterns      |
-| Max File Size   | 10MB                         | Individual file size limit |
-| Max Output Size | 50MB                         | Total output size limit    |
-| Output Format   | XML                          | When not specified         |
-| Exclude         | none                         | No default exclusions      |
-| Dry Run         | disabled                     | Show files to be processed |
+| Setting         | Default Value              | Description                |
+| --------------- | -------------------------- | -------------------------- |
+| Pattern         | `*.go,*.json,*.yaml,*.yml` | Default file patterns      |
+| Max File Size   | 10MB                       | Individual file size limit |
+| Max Output Size | 50MB                       | Total output size limit    |
+| Output Format   | XML                        | When not specified         |
+| Exclude         | none                       | No default exclusions      |
+| Dry Run         | disabled                   | Show files to be processed |
 
 ## 🎯 Basic Usage
 
 ### No Parameters (Current Directory)
 
-\`\`\`bash
+```bash
 filefusion
-\`\`\`
+```
+
 This will:
 
 -   Process the current directory
@@ -83,154 +85,213 @@ This will:
 
 ### Specific Directory
 
-\`\`\`bash
+```bash
 filefusion /path/to/project
-\`\`\`
+```
 
 ### Multiple Directories
 
-\`\`\`bash
+```bash
 filefusion /path/to/project1 /path/to/project2
-\`\`\`
+```
 
 ## 🛠️ Flag Examples
 
 ### Output Path (-o, --output)
 
-\`\`\`bash
-
+```bash
 # Generate XML output
-
 filefusion -o output.xml /path/to/project
 
 # Generate JSON output
-
 filefusion -o output.json /path/to/project
 
 # Generate YAML output
-
 filefusion -o output.yaml /path/to/project
-\`\`\`
+```
 
 ### Pattern Matching Rules
 
-| Pattern            | Description                    |
-| ------------------ | ------------------------------ |
-| \`\*.go\`          | All Go files                   |
-| \`\*.{go,proto}\`  | All Go and Proto files         |
-| \`src/\*_/_.js\`   | All JavaScript files under src |
-| \`!vendor/\*\*\`   | Exclude vendor directory       |
-| \`\*_/_\_test.go\` | All Go test files              |
+| Pattern        | Description                    |
+| -------------- | ------------------------------ |
+| `*.go`         | All Go files                   |
+| `*.{go,proto}` | All Go and Proto files         |
+| `src/**/*.js`  | All JavaScript files under src |
+| `!vendor/**`   | Exclude vendor directory       |
+| `**/*_test.go` | All Go test files              |
 
 ### File Patterns (-p, --pattern)
 
-\`\`\`bash
-
+```bash
 # Process only Python and JavaScript files
-
-filefusion --pattern "_.py,_.js" /path/to/project
+filefusion --pattern "*.py,*.js" /path/to/project
 
 # Process all source files
-
-filefusion -p "_.go,_.rs,_.js,_.py,\*.java" /path/to/project
+filefusion -p "*.go,*.rs,*.js,*.py,*.java" /path/to/project
 
 # Include configuration files
-
-filefusion -p "_.yaml,_.json,_.toml,_.ini" /path/to/project
-\`\`\`
+filefusion -p "*.yaml,*.json,*.toml,*.ini" /path/to/project
+```
 
 ### Exclusions (-e, --exclude)
 
-\`\`\`bash
-
+```bash
 # Exclude test files
-
-filefusion --exclude "\*\_test.go,test/\*\*" /path/to/project
+filefusion --exclude "*_test.go,test/**" /path/to/project
 
 # Exclude build and vendor directories
-
-filefusion -e "build/**,vendor/**,node_modules/\*\*" /path/to/project
+filefusion -e "build/**,vendor/**,node_modules/**" /path/to/project
 
 # Complex exclusion
-
-filefusion -e "**/\*.test.js,**/**tests**/**,**/dist/\*\*" /path/to/project
-\`\`\`
+filefusion -e "**/*.test.js,**/*tests*/**,**/dist/**" /path/to/project
+```
 
 ### Size Limits
 
-\`\`\`bash
-
+```bash
 # Increase individual file size limit to 20MB
-
 filefusion --max-file-size 20MB /path/to/project
 
 # Increase total output size limit to 100MB
-
 filefusion --max-output-size 100MB /path/to/project
 
 # Set both limits and enable cleaning
-
 filefusion --max-file-size 20MB --max-output-size 100MB --clean /path/to/project
-\`\`\`
+```
 
-Size limits accept suffixes: \`B\`, \`KB\`, \`MB\`, \`GB\`, \`TB\`
+Size limits accept suffixes: `B`, `KB`, `MB`, `GB`, `TB`
+
+## 📚 Code Cleaning
+
+FileFusion includes a powerful code cleaning engine that optimizes files for LLM processing while preserving functionality. The cleaner supports multiple programming languages and offers various optimization options.
+
+### Supported Languages
+
+-   Go, Java, Python, Swift, Kotlin
+-   JavaScript, TypeScript, HTML, CSS
+-   C++, C#, PHP, Ruby
+-   SQL, Bash
+
+### Cleaning Options
+
+| Option                           | Description                  | Default |
+| -------------------------------- | ---------------------------- | ------- |
+| `--clean`                        | Enable code cleaning         | false   |
+| `--clean-remove-comments`        | Remove all comments          | true    |
+| `--clean-preserve-doc-comments`  | Keep documentation comments  | true    |
+| `--clean-remove-imports`         | Remove import statements     | false   |
+| `--clean-remove-logging`         | Remove logging statements    | true    |
+| `--clean-remove-getters-setters` | Remove getter/setter methods | true    |
+| `--clean-optimize-whitespace`    | Optimize whitespace          | true    |
+
+### Cleaning Examples
+
+```bash
+# Basic cleaning with default options
+filefusion --clean input.go -o clean.xml
+
+# Preserve all comments
+filefusion --clean --clean-remove-comments=false input.py -o clean.xml
+
+# Remove everything except essential code
+filefusion --clean \
+  --clean-remove-comments \
+  --clean-preserve-doc-comments=false \
+  --clean-remove-logging \
+  --clean-remove-getters-setters \
+  input.java -o clean.xml
+
+# Clean TypeScript while preserving docs
+filefusion --clean \
+  --clean-preserve-doc-comments \
+  --clean-remove-logging \
+  --pattern "*.ts" \
+  src/ -o clean.xml
+
+# Clean multiple languages in a project
+filefusion --clean \
+  --pattern "*.{go,js,py}" \
+  --clean-preserve-doc-comments \
+  --clean-remove-logging \
+  project/ -o clean.xml
+```
+
+### Language-Specific Features
+
+The cleaner automatically detects and handles language-specific patterns:
+
+-   **Logging Statements**: Recognizes common logging patterns
+
+    -   Go: `log.`, `logger.`
+    -   JavaScript/TypeScript: `console.`, `logger.`
+    -   Python: `logging.`, `logger.`, `print`
+    -   Java: `Logger.`, `System.out.`, `System.err.`
+    -   And more...
+
+-   **Documentation**: Preserves language-specific doc formats
+
+    -   Go: `//` and `/* */` doc comments
+    -   Python: Docstrings
+    -   JavaScript/TypeScript: JSDoc
+    -   Java: Javadoc
+
+-   **Code Structure**: Maintains language idioms while removing noise
+    -   Preserves package/module structure
+    -   Keeps essential imports
+    -   Removes debug/test code
 
 ## 📚 Advanced Examples
 
 ### Processing a Go Project
 
-\`\`\`bash
+```bash
 filefusion \
- --pattern "_.go" \
- --exclude "_\_test.go,vendor/\*\*" \
- --output project.json \
- --max-file-size 5MB \
- /path/to/go/project
-\`\`\`
+  --pattern "*.go" \
+  --exclude "*_test.go,vendor/**" \
+  --output project.json \
+  --max-file-size 5MB \
+  /path/to/go/project
+```
 
 ### Processing Web Project Files
 
-\`\`\`bash
+```bash
 filefusion \
- --pattern "_.js,_.ts,_.jsx,_.tsx,_.css,_.html" \
- --exclude "node_modules/**,dist/**,build/\*\*" \
- --output web-project.xml \
- /path/to/web/project
-\`\`\`
+  --pattern "*.js,*.ts,*.jsx,*.tsx,*.css,*.html" \
+  --exclude "node_modules/**,dist/**,build/**" \
+  --output web-project.xml \
+  /path/to/web/project
+```
 
 ### Code Cleaning and Size Optimization
 
-\`\`\`bash
-
+```bash
 # Clean and optimize a Go project
-
 filefusion \
- --pattern "_.go" \
- --exclude "_\_test.go" \
- --clean \
- --clean-remove-comments \
- --clean-remove-logging \
- --output optimized.xml \
- /path/to/go/project
+  --pattern "*.go" \
+  --exclude "*_test.go" \
+  --clean \
+  --clean-remove-comments \
+  --clean-remove-logging \
+  --output optimized.xml \
+  /path/to/go/project
 
 # Clean TypeScript/JavaScript with preserved documentation
-
 filefusion \
- --pattern "_.ts,_.js" \
- --clean \
- --clean-preserve-doc-comments \
- --clean-remove-logging \
- --clean-optimize-whitespace \
- --output web-optimized.xml \
- /path/to/web/project
-\`\`\`
+  --pattern "*.ts,*.js" \
+  --clean \
+  --clean-preserve-doc-comments \
+  --clean-remove-logging \
+  --clean-optimize-whitespace \
+  --output web-optimized.xml \
+  /path/to/web/project
+```
 
 ## 📄 Output Format Examples
 
 ### XML Output
 
-\`\`\`xml
-
+```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <documents>
   <document index="1">
@@ -241,33 +302,32 @@ filefusion \
     </document_content>
   </document>
 </documents>
-\`\`\`
+```
 
 ### JSON Output
 
-\`\`\`json
+```json
 {
-"documents": [
-{
-"index": 1,
-"source": "main.go",
-"document_content": "package main\n..."
+    "documents": [
+        {
+            "index": 1,
+            "source": "main.go",
+            "document_content": "package main\n..."
+        }
+    ]
 }
-]
-}
-\`\`\`
+```
 
 ### YAML Output
 
-\`\`\`yaml
+```yaml
 documents:
-
--   index: 1
-    source: main.go
-    document_content: |
-    package main
-    ...
-    \`\`\`
+    - index: 1
+      source: main.go
+      document_content: |
+          package main
+          ...
+```
 
 ## 💡 Tips and Best Practices
 
@@ -275,7 +335,7 @@ documents:
 
     - Begin with specific patterns
     - Add more patterns as needed
-    - Test with \`--dry-run\` first
+    - Test with `--dry-run` first
 
 2. **Use Exclusions**
 
@@ -286,7 +346,7 @@ documents:
 3. **Monitor Size**
 
     - Check reported total size
-    - Use \`--clean\` for size reduction
+    - Use `--clean` for size reduction
     - Set appropriate limits
 
 4. **Format Choice**
@@ -310,7 +370,7 @@ documents:
 
 ### "output size exceeds maximum"
 
--   Increase \`--max-output-size\`
+-   Increase `--max-output-size`
 -   Use more specific patterns
 -   Split processing into multiple runs
 
@@ -327,5 +387,5 @@ documents:
 ---
 
 <div align="center">
-Made with ❤️ by the FileFusion team
+Made with ❤️ by the DrGos team
 </div>
