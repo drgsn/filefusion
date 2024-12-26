@@ -1,50 +1,30 @@
-version: 2
-
-before:
-  hooks:
-    # If you have tests, uncomment:
-    - go test ./...
-    - echo "Starting GoReleaser..."
-
 builds:
-  - id: filefusion
-    # If your main.go is in the root folder, use "." or "./".
-    main: ./cmd/filefusion/main.go
-    # The base output filename (GoReleaser adds .exe for Windows).
-    binary: filefusion
-    # Target OS/Arch combos:
-    goos:
-      - linux
-      - darwin
-      - windows
-    goarch:
-      - amd64
-      - arm64
-    # Disable CGO if not needed:
-    env:
-      - CGO_ENABLED=0
-
-archives:
-  - id: filefusion-archive
-    # Name format for each archive
-    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
-    # Linux & macOS get tar.gz by default; Windows gets .zip
-    format_overrides:
-      - goos: windows
-        format: zip
-    # Files to include in the archive
-    files:
-      - README*
-      - LICENSE*
-    allow_different_binary_count: true
-
-# Publishes a GitHub release for the git tag you push (e.g., v0.0.2).
-release:
-  prerelease: auto
-  draft: false
-  name_template: "v{{ .Version }}"
-
-# Generate checksums for the archives
-checksum:
-  name_template: "checksums.txt"
-  algorithm: sha256
+    - id: filefusion
+      main: ./cmd/filefusion/main.go
+      binary: filefusion
+      goos:
+          - linux
+          - windows
+      goarch:
+          - amd64
+          - arm64
+      env:
+          - CGO_ENABLED=1
+      flags:
+          - -tags=bash cpp csharp golang css html java php kotlin javascript ruby python swift typescript sql
+      overrides:
+          - goos: linux
+            goarch: arm64
+            env:
+                - CGO_ENABLED=1
+                - CC=aarch64-linux-gnu-gcc
+                - CXX=aarch64-linux-gnu-g++
+          - goos: windows
+            goarch: amd64
+            env:
+                - CGO_ENABLED=1
+                - CC=x86_64-w64-mingw32-gcc
+                - CXX=x86_64-w64-mingw32-g++
+      ignore:
+          - goos: windows
+            goarch: arm64

@@ -360,7 +360,7 @@ documents:
     - Be specific with patterns
     - Test patterns before processing
 
-## ❗ Common Issues and Solutions
+## ❗ Issues and Solutions
 
 ### "no files found matching pattern"
 
@@ -387,5 +387,5 @@ documents:
 ---
 
 <div align="center">
-Made with ❤️ by the DrGos team
+Made with ❤️ by the DrGos
 </div>
