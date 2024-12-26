@@ -143,10 +143,12 @@ func (p *FileProcessor) processFile(path string) FileResult {
 
 	// Clean content if enabled and language is supported
 	if p.options.CleanerOptions != nil {
-		if cleaned, err := p.cleanContent(path, content); err == nil {
-			content = cleaned
-		} else {
+		cleaned, err := p.cleanContent(path, content)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: Failed to clean %s: %v\n", path, err)
+			// Continue with original content instead of failing
+		} else {
+			content = cleaned
 		}
 	}
 
@@ -170,6 +172,13 @@ func (p *FileProcessor) processFile(path string) FileResult {
 
 // cleanContent attempts to clean the content using the appropriate language cleaner
 func (p *FileProcessor) cleanContent(path string, content []byte) ([]byte, error) {
+	// Add defer/recover to prevent panics from crashing goroutines
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "Recovered from panic in cleanContent for %s: %v\n", path, r)
+		}
+	}()
+
 	lang := p.detectLanguage(path)
 	if lang == "" {
 		return content, nil
@@ -177,10 +186,15 @@ func (p *FileProcessor) cleanContent(path string, content []byte) ([]byte, error
 
 	c, err := p.getOrCreateCleaner(lang)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create cleaner: %w", err)
 	}
 
-	return c.Clean(content)
+	cleaned, err := c.Clean(content)
+	if err != nil {
+		return nil, fmt.Errorf("failed to clean content: %w", err)
+	}
+
+	return cleaned, nil
 }
 
 // getOrCreateCleaner safely gets or creates a cleaner for the given language
