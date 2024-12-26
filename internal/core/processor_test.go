@@ -4,13 +4,25 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/drgsn/filefusion/internal/core/cleaner"
 )
+
+func normalizeWhitespace(s string) string {
+	// Replace all newlines with a single newline
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	// Trim any whitespace from the beginning and end
+	s = strings.TrimSpace(s)
+	// Replace multiple newlines with a single newline
+	s = strings.Join(strings.Fields(strings.ReplaceAll(s, "\n", " ")), " ")
+	return s
+}
 
 func TestFileProcessor(t *testing.T) {
 	// Create temporary test directory
@@ -483,5 +495,363 @@ func TestRelativePathCreation(t *testing.T) {
 				t.Errorf("createRelativePath() = %v, want %v", got, tt.expectedPath)
 			}
 		})
+	}
+}
+
+func TestCleanerPanicRecovery(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "filefusion-panic-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	testFile := filepath.Join(tmpDir, "test.go")
+	testContent := "package main\n\nfunc main() {}\n"
+	if err := os.WriteFile(testFile, []byte(testContent), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	processor := NewFileProcessor(&MixOptions{
+		InputPath:      tmpDir,
+		CleanerOptions: cleaner.DefaultOptions(),
+		MaxFileSize:    1024, // Set a reasonable file size limit
+	})
+
+	// Process the file normally
+	result := processor.processFile(testFile)
+	if result.Error != nil {
+		t.Errorf("Expected no error, got: %v", result.Error)
+	}
+
+	// Compare normalized content
+	expectedNormalized := normalizeWhitespace(testContent)
+	gotNormalized := normalizeWhitespace(result.Content.Content)
+
+	if expectedNormalized != gotNormalized {
+		t.Errorf("Content mismatch after normalization:\nExpected: '%s'\nGot: '%s'",
+			expectedNormalized, gotNormalized)
+	}
+}
+
+func TestCleanerErrorHandling(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "filefusion-error-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	testCases := []struct {
+		name           string
+		content        string
+		expectOriginal bool
+	}{
+		{
+			name:           "process Go file",
+			content:        "package main\n\nfunc main() {}\n",
+			expectOriginal: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			testFile := filepath.Join(tmpDir, "test.go")
+			if err := os.WriteFile(testFile, []byte(tc.content), 0644); err != nil {
+				t.Fatalf("Failed to create test file: %v", err)
+			}
+
+			processor := NewFileProcessor(&MixOptions{
+				InputPath:      tmpDir,
+				CleanerOptions: cleaner.DefaultOptions(),
+				MaxFileSize:    1024, // Set a reasonable file size limit
+			})
+
+			result := processor.processFile(testFile)
+			if result.Error != nil {
+				t.Fatalf("Unexpected error: %v", result.Error)
+			}
+
+			if tc.expectOriginal {
+				gotNormalized := normalizeWhitespace(result.Content.Content)
+
+				// Test for presence of key elements in normalized content
+				if !strings.Contains(gotNormalized, "package main") {
+					t.Errorf("Expected content to contain 'package main', got: '%s'", gotNormalized)
+				}
+				if !strings.Contains(gotNormalized, "func main()") {
+					t.Errorf("Expected content to contain 'func main()', got: '%s'", gotNormalized)
+				}
+			}
+		})
+	}
+}
+
+func TestProcessFileUnknownLanguage(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "filefusion-unknown-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Test file with unknown extension
+	testFile := filepath.Join(tmpDir, "test.xyz")
+	testContent := "some random content\n"
+	if err := os.WriteFile(testFile, []byte(testContent), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	processor := NewFileProcessor(&MixOptions{
+		InputPath:      tmpDir,
+		CleanerOptions: cleaner.DefaultOptions(),
+		MaxFileSize:    1024,
+	})
+
+	// Process the file
+	result := processor.processFile(testFile)
+
+	// Check there's no error
+	if result.Error != nil {
+		t.Errorf("Expected no error for unknown language, got: %v", result.Error)
+	}
+
+	// Content should remain unchanged for unknown language
+	if result.Content.Content != testContent {
+		t.Errorf("Expected content to remain unchanged for unknown language.\nExpected: %q\nGot: %q",
+			testContent, result.Content.Content)
+	}
+
+	// Extension should be preserved
+	if result.Content.Extension != "xyz" {
+		t.Errorf("Expected extension 'xyz', got %q", result.Content.Extension)
+	}
+
+	// Check path handling
+	if !strings.HasSuffix(result.Content.Path, "test.xyz") {
+		t.Errorf("Expected path to end with 'test.xyz', got %q", result.Content.Path)
+	}
+}
+
+func TestProcessFileEdgeCases(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "filefusion-edge-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	tests := []struct {
+		name        string
+		setup       func(dir string) string
+		maxFileSize int64
+		wantErr     bool
+		check       func(*testing.T, FileResult)
+	}{
+		{
+			name: "empty file",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "empty.go")
+				err := os.WriteFile(path, []byte(""), 0644)
+				if err != nil {
+					t.Fatalf("Failed to create empty file: %v", err)
+				}
+				return path
+			},
+			maxFileSize: 1024,
+			wantErr:     false,
+			check: func(t *testing.T, r FileResult) {
+				if r.Content.Size != 0 {
+					t.Errorf("Expected size 0 for empty file, got %d", r.Content.Size)
+				}
+			},
+		},
+		{
+			name: "whitespace only file",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "whitespace.go")
+				err := os.WriteFile(path, []byte("   \n\t\n   "), 0644)
+				if err != nil {
+					t.Fatalf("Failed to create whitespace file: %v", err)
+				}
+				return path
+			},
+			maxFileSize: 1024,
+			wantErr:     false,
+			check: func(t *testing.T, r FileResult) {
+				if len(strings.TrimSpace(r.Content.Content)) != 0 {
+					t.Error("Expected trimmed content to be empty")
+				}
+			},
+		},
+		{
+			name: "file with null bytes",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "null.go")
+				content := []byte("package main\x00func main() {}")
+				err := os.WriteFile(path, content, 0644)
+				if err != nil {
+					t.Fatalf("Failed to create file with null bytes: %v", err)
+				}
+				return path
+			},
+			maxFileSize: 1024,
+			wantErr:     false,
+			check: func(t *testing.T, r FileResult) {
+				if !strings.Contains(r.Content.Content, "\x00") {
+					t.Error("Expected content to preserve null bytes")
+				}
+			},
+		},
+		{
+			name: "file with invalid UTF-8",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "invalid_utf8.go")
+				content := []byte("package main\xFF\xFEfunc main() {}")
+				err := os.WriteFile(path, content, 0644)
+				if err != nil {
+					t.Fatalf("Failed to create file with invalid UTF-8: %v", err)
+				}
+				return path
+			},
+			maxFileSize: 1024,
+			wantErr:     false,
+			check: func(t *testing.T, r FileResult) {
+				if utf8.ValidString(r.Content.Content) {
+					t.Error("Expected content to remain invalid UTF-8")
+				}
+			},
+		},
+		{
+			name: "file at exact size limit",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "exact.go")
+				content := make([]byte, 10) // Will set maxFileSize to 10
+				err := os.WriteFile(path, content, 0644)
+				if err != nil {
+					t.Fatalf("Failed to create exact size file: %v", err)
+				}
+				return path
+			},
+			maxFileSize: 10,
+			wantErr:     false,
+			check: func(t *testing.T, r FileResult) {
+				if r.Content.Size != 10 {
+					t.Errorf("Expected size 10, got %d", r.Content.Size)
+				}
+			},
+		},
+		{
+			name: "special characters in filename",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "special!@#$%^&()_+{}.go")
+				err := os.WriteFile(path, []byte("content"), 0644)
+				if err != nil {
+					t.Fatalf("Failed to create file with special chars: %v", err)
+				}
+				return path
+			},
+			maxFileSize: 1024,
+			wantErr:     false,
+			check: func(t *testing.T, r FileResult) {
+				if !strings.Contains(r.Content.Path, "!@#$%^&()_+") {
+					t.Error("Expected special characters to be preserved in path")
+				}
+			},
+		},
+		{
+			name: "nil cleaner options",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "test.go")
+				err := os.WriteFile(path, []byte("package main"), 0644)
+				if err != nil {
+					t.Fatalf("Failed to create test file: %v", err)
+				}
+				return path
+			},
+			maxFileSize: 1024,
+			wantErr:     false,
+			check: func(t *testing.T, r FileResult) {
+				if r.Content.Content != "package main" {
+					t.Error("Expected content to remain unchanged with nil cleaner options")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filePath := tt.setup(tmpDir)
+
+			// Create processor with test-specific options
+			processor := NewFileProcessor(&MixOptions{
+				InputPath:      tmpDir,
+				MaxFileSize:    tt.maxFileSize,
+				CleanerOptions: nil, // Test with nil cleaner options by default
+			})
+
+			result := processor.processFile(filePath)
+
+			if tt.wantErr {
+				if result.Error == nil {
+					t.Error("Expected error but got none")
+				}
+				return
+			}
+
+			if result.Error != nil {
+				t.Errorf("Unexpected error: %v", result.Error)
+				return
+			}
+
+			tt.check(t, result)
+		})
+	}
+}
+
+// Optionally, if we can create symlinks (might need to skip on Windows)
+func TestProcessFileSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping symlink tests on Windows")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "filefusion-symlink-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a real file
+	realFile := filepath.Join(tmpDir, "real.go")
+	if err := os.WriteFile(realFile, []byte("package main"), 0644); err != nil {
+		t.Fatalf("Failed to create real file: %v", err)
+	}
+
+	// Create valid symlink
+	validLink := filepath.Join(tmpDir, "valid.go")
+	if err := os.Symlink(realFile, validLink); err != nil {
+		t.Fatalf("Failed to create symlink: %v", err)
+	}
+
+	// Create broken symlink
+	brokenLink := filepath.Join(tmpDir, "broken.go")
+	if err := os.Symlink(filepath.Join(tmpDir, "nonexistent.go"), brokenLink); err != nil {
+		t.Fatalf("Failed to create broken symlink: %v", err)
+	}
+
+	processor := NewFileProcessor(&MixOptions{
+		InputPath:   tmpDir,
+		MaxFileSize: 1024,
+	})
+
+	// Test valid symlink
+	result := processor.processFile(validLink)
+	if result.Error != nil {
+		t.Errorf("Expected no error for valid symlink, got: %v", result.Error)
+	}
+	if result.Content.Content != "package main" {
+		t.Error("Expected to read content through valid symlink")
+	}
+
+	// Test broken symlink
+	result = processor.processFile(brokenLink)
+	if result.Error == nil {
+		t.Error("Expected error for broken symlink, got none")
 	}
 }
