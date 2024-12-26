@@ -1,3 +1,10 @@
+version: 2
+
+before:
+    hooks:
+        - go test ./...
+        - echo "Starting GoReleaser..."
+
 builds:
     - id: filefusion
       main: ./cmd/filefusion/main.go
@@ -5,6 +12,7 @@ builds:
       goos:
           - linux
           - windows
+          - darwin
       goarch:
           - amd64
           - arm64
@@ -25,6 +33,60 @@ builds:
                 - CGO_ENABLED=1
                 - CC=x86_64-w64-mingw32-gcc
                 - CXX=x86_64-w64-mingw32-g++
+          - goos: darwin
+            goarch: amd64
+            env:
+                - CGO_ENABLED=1
+                - CC=o64-clang
+                - CXX=o64-clang++
+          - goos: darwin
+            goarch: arm64
+            env:
+                - CGO_ENABLED=1
+                - CC=oa64-clang
+                - CXX=oa64-clang++
       ignore:
           - goos: windows
             goarch: arm64
+
+archives:
+    - id: filefusion-archive
+      name_template: >-
+          {{ .ProjectName }}_{{ .Version }}_
+          {{- title .Os }}_
+          {{- if eq .Arch "amd64" }}x86_64
+          {{- else if eq .Arch "386" }}i386
+          {{- else }}{{ .Arch }}{{ end }}
+      format_overrides:
+          - goos: windows
+            format: zip
+      files:
+          - README*
+          - LICENSE*
+      allow_different_binary_count: true
+
+release:
+    prerelease: auto
+    draft: false
+    mode: replace
+    name_template: 'v{{ .Version }}'
+    header: |
+        ## FileFusion {{ .Version }}
+
+        For full details, see the [documentation](https://github.com/drgsn/filefusion#readme).
+    footer: |
+        **Full Changelog**: https://github.com/drgsn/filefusion/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+checksum:
+    name_template: 'checksums.txt'
+    algorithm: sha256
+
+changelog:
+    sort: asc
+    filters:
+        exclude:
+            - '^docs:'
+            - '^test:'
+            - '^ci:'
+            - Merge pull request
+            - Merge branch

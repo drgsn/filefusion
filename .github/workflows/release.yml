@@ -30,7 +30,17 @@ jobs:
                     gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
                     gcc-mingw-w64 g++-mingw-w64 \
                     mingw-w64
-                  echo "Installing tools completed"
+
+                  # Install osxcross for macOS cross-compilation
+                  mkdir -p /tmp/osxcross
+                  cd /tmp/osxcross
+                  wget https://github.com/tpoechtrager/osxcross/archive/master.zip
+                  unzip master.zip
+                  cd osxcross-master
+                  wget -P tarballs https://github.com/phracker/MacOSX-SDKs/releases/download/11.3/MacOSX11.3.sdk.tar.xz
+                  UNATTENDED=1 ./build.sh
+                  echo "OSXCROSS_ROOT=/tmp/osxcross/osxcross-master/target" >> $GITHUB_ENV
+                  echo "/tmp/osxcross/osxcross-master/target/bin" >> $GITHUB_PATH
 
             - name: Run GoReleaser
               uses: goreleaser/goreleaser-action@v4
