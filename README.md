@@ -387,5 +387,5 @@ documents:
 ---
 
 <div align="center">
-Made with ❤️ by the DrGos team
+Made with ❤️ by the DrGos
 </div>
