@@ -8,6 +8,13 @@
             rel="stylesheet"
             href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"
         />
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/command-line/prism-command-line.min.css"
+        />
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/command-line/prism-command-line.min.js"></script>
         <style>
             /* Theme Variables */
             :root[data-theme='dark'] {
@@ -17,6 +24,13 @@
                 --text-gray: #9ca3af;
                 --blue: #3b82f6;
                 --border-color: #333;
+                --code-bg: #1f2937;
+                --code-text: #e5e7eb;
+                --code-comment: #6b7280;
+                --example-bg: #111827;
+                --button-secondary-bg: #374151;
+                --button-secondary-hover: #4b5563;
+                --feature-card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
             }
 
             :root[data-theme='light'] {
@@ -26,6 +40,13 @@
                 --text-gray: #4b5563;
                 --blue: #2563eb;
                 --border-color: #e5e7eb;
+                --code-bg: #f8fafc;
+                --code-text: #1e293b;
+                --code-comment: #64748b;
+                --example-bg: #f1f5f9;
+                --button-secondary-bg: #e5e7eb;
+                --button-secondary-hover: #d1d5db;
+                --feature-card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
             }
 
             /* Base Styles */
@@ -40,6 +61,21 @@
                 background: var(--bg-dark);
                 color: var(--text-light);
                 transition: background-color 0.3s, color 0.3s;
+                padding-top: 4rem;
+            }
+
+            h1,
+            h2,
+            h3 {
+                font-weight: 700;
+                line-height: 1.2;
+                margin-bottom: 1rem;
+            }
+
+            h2 {
+                font-size: 2rem;
+                margin-bottom: 2rem;
+                text-align: center;
             }
 
             /* Layout */
@@ -54,7 +90,17 @@
                 background: var(--bg-dark-secondary);
                 padding: 1rem 0;
                 border-bottom: 1px solid var(--border-color);
-                transition: background-color 0.3s;
+                transition: all 0.3s;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                z-index: 1000;
+                transform: translateY(0);
+            }
+
+            header.hidden {
+                transform: translateY(-100%);
             }
 
             .header-content {
@@ -89,23 +135,40 @@
             /* Theme Toggle */
             .theme-button {
                 background: transparent;
-                border: 1px solid var(--text-gray);
+                border: 2px solid var(--border-color);
                 border-radius: 0.5rem;
-                padding: 0.5rem;
+                padding: 0.5rem 1rem;
                 color: var(--text-gray);
                 cursor: pointer;
-                transition: all 0.2s;
+                transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                 margin-left: 1.5rem;
+                position: relative;
+                overflow: hidden;
             }
 
             .theme-button:hover {
-                border-color: var(--text-light);
-                color: var(--text-light);
+                border-color: var(--blue);
+                color: var(--blue);
+                transform: translateY(-1px);
+            }
+
+            .theme-icon {
+                display: inline-block;
+                transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            }
+
+            .theme-button:hover .theme-icon {
+                transform: rotate(360deg);
+            }
+
+            .theme-button.switching .theme-icon {
+                transform: translateY(-100%);
+                opacity: 0;
             }
 
             /* Hero Section */
             .hero {
-                padding: 4rem 0;
+                padding: 6rem 0;
                 text-align: center;
                 background: var(--bg-dark-secondary);
                 border-bottom: 1px solid var(--border-color);
@@ -113,24 +176,31 @@
             }
 
             .hero h1 {
-                font-size: 2.5rem;
-                margin-bottom: 1rem;
+                font-size: 3rem;
+                margin-bottom: 1.5rem;
+                background: linear-gradient(to right, var(--blue), #8b5cf6);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
             }
 
             .hero p {
                 color: var(--text-gray);
                 font-size: 1.25rem;
-                margin-bottom: 2rem;
+                margin-bottom: 2.5rem;
+                max-width: 600px;
+                margin-left: auto;
+                margin-right: auto;
             }
 
             /* Buttons */
             .button {
                 display: inline-block;
-                padding: 0.75rem 1.5rem;
+                padding: 0.875rem 1.75rem;
                 border-radius: 0.5rem;
                 text-decoration: none;
                 font-weight: 500;
-                transition: background-color 0.2s;
+                transition: all 0.2s;
+                border: 2px solid transparent;
             }
 
             .button-primary {
@@ -140,37 +210,61 @@
 
             .button-primary:hover {
                 background: #2563eb;
+                transform: translateY(-1px);
+                box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2);
             }
 
             .button-secondary {
-                background: #374151;
+                background: var(--button-secondary-bg);
                 color: var(--text-light);
+                border: 2px solid var(--border-color);
             }
 
             .button-secondary:hover {
-                background: #4b5563;
+                background: var(--button-secondary-hover);
+                transform: translateY(-1px);
+                border-color: var(--blue);
             }
 
             /* Features */
             .features {
-                padding: 4rem 0;
+                padding: 6rem 0;
             }
 
             .features-grid {
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
                 gap: 2rem;
-                margin-top: 2rem;
+                margin-top: 3rem;
             }
 
             .feature-card {
                 background: var(--bg-dark-secondary);
-                padding: 1.5rem;
-                border-radius: 0.5rem;
+                padding: 2rem;
+                border-radius: 1rem;
                 border: 1px solid var(--border-color);
                 opacity: 0;
                 transform: translateY(20px);
-                transition: opacity 0.6s, transform 0.6s, background-color 0.3s, border-color 0.3s;
+                transition: all 0.6s;
+                box-shadow: var(--feature-card-shadow);
+                position: relative;
+                overflow: hidden;
+            }
+
+            .feature-card::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 4px;
+                background: linear-gradient(to right, var(--blue), #8b5cf6);
+                opacity: 0;
+                transition: opacity 0.3s;
+            }
+
+            .feature-card:hover::before {
+                opacity: 1;
             }
 
             .feature-card.visible {
@@ -178,8 +272,29 @@
                 transform: translateY(0);
             }
 
+            .feature-card:hover {
+                transform: translateY(-5px);
+                border-color: var(--border-color);
+            }
+
             .feature-card h3 {
+                color: var(--blue);
                 margin-top: 0;
+                font-size: 1.25rem;
+                display: flex;
+                align-items: center;
+                gap: 0.75rem;
+            }
+
+            .feature-icon {
+                font-size: 1.5rem;
+                line-height: 1;
+            }
+
+            .feature-card p {
+                color: var(--text-gray);
+                margin: 0;
+                line-height: 1.6;
             }
 
             /* Installation Section */
@@ -189,47 +304,110 @@
 
             /* Code Examples */
             .examples {
-                padding: 4rem 0;
+                padding: 6rem 0;
                 background: var(--bg-dark-secondary);
-                transition: background-color 0.3s;
+            }
+
+            .examples h2 {
+                margin-bottom: 3rem;
             }
 
             .example {
-                background: #1f2937;
-                border-radius: 0.5rem;
-                padding: 1rem;
-                margin-bottom: 1rem;
+                background: var(--example-bg);
+                border-radius: 0.75rem;
+                padding: 1.25rem;
+                margin-bottom: 1.5rem;
                 position: relative;
+                border: 1px solid var(--border-color);
+                box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
             }
 
             .example pre {
                 margin: 0;
                 overflow-x: auto;
+                white-space: pre-wrap;
+                word-wrap: break-word;
+                line-height: 1.6;
+                padding: 0.75rem;
+                background: var(--code-bg);
+                border-radius: 0.5rem;
+                border: 1px solid var(--border-color);
+            }
+
+            .example pre[class*='language-'] {
+                margin: 0;
+                padding: 1rem;
+                background: var(--code-bg);
+            }
+
+            .example code {
+                font-family: 'Monaco', 'Consolas', monospace;
+                font-size: 0.9rem;
+                tab-size: 4;
+                color: var(--code-text);
             }
 
             .example-comment {
-                color: #6b7280;
-                margin-bottom: 0.5rem;
+                color: var(--code-comment);
+                margin-bottom: 0.75rem;
+                font-family: 'Monaco', 'Consolas', monospace;
+                font-size: 0.9rem;
+                padding-left: 0.5rem;
             }
 
-            /* Copy Button */
+            /* Style for long commands */
+            .example pre code {
+                display: inline-block;
+                min-width: 100%;
+                padding-right: 2.5rem;
+            }
+
+            /* Ensure copy button doesn't overlap with wrapped text */
             .copy-button {
                 position: absolute;
-                top: 0.5rem;
-                right: 0.5rem;
+                top: 1rem;
+                right: 1rem;
                 background: var(--bg-dark);
-                border: 1px solid var(--text-gray);
-                border-radius: 0.25rem;
-                padding: 0.25rem 0.5rem;
+                border: 1px solid var(--border-color);
+                border-radius: 0.375rem;
+                padding: 0.375rem 0.75rem;
                 color: var(--text-gray);
                 font-size: 0.875rem;
                 cursor: pointer;
                 transition: all 0.2s;
+                z-index: 1;
+                box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+                display: flex;
+                align-items: center;
+                gap: 0.375rem;
+            }
+
+            .copy-button::before {
+                content: '📋';
+                font-size: 1rem;
+                line-height: 1;
             }
 
             .copy-button:hover {
-                border-color: var(--text-light);
-                color: var(--text-light);
+                border-color: var(--blue);
+                color: var(--blue);
+                background: var(--bg-dark-secondary);
+                transform: translateY(-1px);
+                box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.1);
+            }
+
+            .copy-button:active {
+                transform: translateY(0);
+            }
+
+            .copy-button.copied::before {
+                content: '✓';
+                color: #10b981;
+            }
+
+            .copy-button.copied {
+                border-color: #10b981;
+                color: #10b981;
             }
 
             /* Back to Top Button */
@@ -261,11 +439,19 @@
             /* Footer */
             footer {
                 text-align: center;
-                padding: 2rem 0;
+                padding: 3rem 0;
                 background: var(--bg-dark-secondary);
                 color: var(--text-gray);
                 border-top: 1px solid var(--border-color);
-                transition: background-color 0.3s;
+            }
+
+            footer a {
+                color: var(--blue);
+                text-decoration: none;
+            }
+
+            footer a:hover {
+                text-decoration: underline;
             }
 
             /* Responsive Design */
@@ -293,6 +479,29 @@
                     bottom: 1rem;
                     right: 1rem;
                 }
+
+                .example {
+                    padding: 1rem;
+                    margin-bottom: 1rem;
+                }
+
+                .example pre {
+                    padding: 0.5rem;
+                    font-size: 0.85rem;
+                }
+
+                .copy-button {
+                    padding: 0.25rem 0.5rem;
+                    font-size: 0.75rem;
+                }
+            }
+
+            /* Command line plugin styles */
+            .command-line-prompt {
+                border-right: 1px solid var(--border-color);
+                margin-right: 1em;
+                padding-right: 1em;
+                color: var(--text-gray);
             }
         </style>
     </head>
@@ -364,25 +573,45 @@ chmod +x install.sh
                 <h2>Features</h2>
                 <div class="features-grid">
                     <div class="feature-card">
-                        <h3>Multiple Output Formats</h3>
+                        <h3><span class="feature-icon">📦</span>Multiple Output Formats</h3>
                         <p>
-                            Export your concatenated files in XML, JSON, or YAML formats for maximum
-                            compatibility
+                            Export your concatenated files in XML, JSON, or YAML formats with
+                            preserved metadata and structure
                         </p>
                     </div>
                     <div class="feature-card">
-                        <h3>Pattern Matching</h3>
-                        <p>Use glob patterns to include or exclude files based on your needs</p>
-                    </div>
-                    <div class="feature-card">
-                        <h3>CLI Interface</h3>
-                        <p>Simple command-line interface for easy integration into your workflow</p>
-                    </div>
-                    <div class="feature-card">
-                        <h3>Size Control</h3>
+                        <h3><span class="feature-icon">🎯</span>Smart Pattern Matching</h3>
                         <p>
-                            Built-in file size limits and output size control to prevent processing
-                            oversized files
+                            Use powerful glob patterns to include or exclude files with precise
+                            control over your codebase
+                        </p>
+                    </div>
+                    <div class="feature-card">
+                        <h3><span class="feature-icon">⚡️</span>Concurrent Processing</h3>
+                        <p>
+                            Process files in parallel for maximum performance, with built-in safety
+                            limits and error handling
+                        </p>
+                    </div>
+                    <div class="feature-card">
+                        <h3><span class="feature-icon">📊</span>Size Control</h3>
+                        <p>
+                            Set limits for individual files and total output size, with detailed
+                            size reporting and optimization
+                        </p>
+                    </div>
+                    <div class="feature-card">
+                        <h3><span class="feature-icon">🧹</span>Code Cleaning</h3>
+                        <p>
+                            Remove comments, logging, and optimize whitespace while preserving
+                            essential documentation
+                        </p>
+                    </div>
+                    <div class="feature-card">
+                        <h3><span class="feature-icon">🔒</span>Safe Operations</h3>
+                        <p>
+                            Atomic writes and thorough error checking ensure your files are always
+                            handled safely
                         </p>
                     </div>
                 </div>
@@ -407,8 +636,50 @@ chmod +x install.sh
                     <pre><code>filefusion --max-file-size 5MB --max-output-size 20MB --output docs.yaml ./docs</code></pre>
                 </div>
                 <div class="example">
+                    <div class="example-comment"># Clean code with preserved documentation</div>
+                    <pre><code>filefusion --pattern "*.{go,js,ts}" --clean --clean-preserve-doc-comments --clean-remove-logging --output clean.xml ./src</code></pre>
+                </div>
+                <div class="example">
+                    <div class="example-comment">
+                        # Dry run to preview files that will be processed
+                    </div>
+                    <pre><code>filefusion --pattern "*.{go,js,py}" --exclude "**/test/**" --dry-run ./project</code></pre>
+                </div>
+                <div class="example">
+                    <div class="example-comment"># Maximum cleaning for size reduction</div>
+                    <pre><code>filefusion --pattern "*.{go,js,py}" --clean --clean-remove-comments --clean-remove-imports --clean-remove-logging --clean-optimize-whitespace --output minimal.xml ./src</code></pre>
+                </div>
+                <div class="example">
                     <div class="example-comment"># Process multiple directories</div>
                     <pre><code>filefusion --pattern "*.go" ./cmd ./internal ./pkg</code></pre>
+                </div>
+                <div class="example">
+                    <div class="example-comment"># Processing a complex web project</div>
+                    <pre><code>filefusion --pattern "*.js,*.ts,*.jsx,*.tsx,*.css,*.html" --exclude "node_modules/**,dist/**,build/**" --output web-project.xml /path/to/web/project</code></pre>
+                </div>
+                <div class="example">
+                    <div class="example-comment">
+                        # Documentation processing with size monitoring
+                    </div>
+                    <pre><code>filefusion --pattern "*.md,*.txt,*.rst" --exclude "node_modules/**,vendor/**" --max-file-size 1MB --output docs.yaml /path/to/docs</code></pre>
+                </div>
+                <div class="example">
+                    <div class="example-comment">
+                        # Multi-language project with extensive cleaning
+                    </div>
+                    <pre><code>filefusion --pattern "*.{go,js,ts,py,java}" --exclude "**/{test,tests,vendor}/**" --clean --clean-remove-comments --clean-preserve-doc-comments --clean-optimize-whitespace --output multi-lang.xml /path/to/project</code></pre>
+                </div>
+                <div class="example">
+                    <div class="example-comment">
+                        # Clean with size monitoring and whitespace optimization
+                    </div>
+                    <pre><code>filefusion --pattern "*.{go,js,py,java}" --clean --clean-remove-comments --clean-optimize-whitespace --max-file-size 20MB --max-output-size 100MB --output monitored-clean.xml /path/to/project</code></pre>
+                </div>
+                <div class="example">
+                    <div class="example-comment">
+                        # Process large codebase with comprehensive options
+                    </div>
+                    <pre><code>filefusion --pattern "*.{go,js,ts,py,java,cpp,h}" --exclude "**/{test,build,dist,vendor}/**" --clean --clean-remove-comments --clean-optimize-whitespace --max-file-size 50MB --max-output-size 500MB --output large-project.xml /path/to/large/project</code></pre>
                 </div>
             </div>
         </section>
@@ -422,7 +693,7 @@ chmod +x install.sh
         <button id="backToTop" class="back-to-top">↑</button>
 
         <script>
-            // Theme toggle functionality
+            // Theme toggle functionality with animation
             const themeToggle = document.getElementById('themeToggle');
             const root = document.documentElement;
             const icon = themeToggle.querySelector('.theme-icon');
@@ -436,14 +707,51 @@ chmod +x install.sh
                 const currentTheme = root.getAttribute('data-theme');
                 const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
 
-                root.setAttribute('data-theme', newTheme);
-                localStorage.setItem('theme', newTheme);
-                updateIcon(newTheme);
+                // Add animation class
+                themeToggle.classList.add('switching');
+
+                // Wait for animation
+                setTimeout(() => {
+                    root.setAttribute('data-theme', newTheme);
+                    localStorage.setItem('theme', newTheme);
+                    updateIcon(newTheme);
+                    themeToggle.classList.remove('switching');
+                }, 150);
             });
 
             function updateIcon(theme) {
                 icon.textContent = theme === 'dark' ? '🌙' : '☀️';
             }
+
+            // Sticky header with hide on scroll down
+            const header = document.querySelector('header');
+            let lastScroll = 0;
+
+            window.addEventListener('scroll', () => {
+                const currentScroll = window.pageYOffset;
+
+                if (currentScroll <= 0) {
+                    header.classList.remove('hidden');
+                    return;
+                }
+
+                if (currentScroll > lastScroll && !header.classList.contains('hidden')) {
+                    // Scrolling down
+                    header.classList.add('hidden');
+                } else if (currentScroll < lastScroll && header.classList.contains('hidden')) {
+                    // Scrolling up
+                    header.classList.remove('hidden');
+                }
+
+                lastScroll = currentScroll;
+            });
+
+            // Update code blocks to use Prism.js
+            document.querySelectorAll('.example pre code').forEach((block) => {
+                block.classList.add('language-bash');
+                block.setAttribute('data-prompt', '$');
+                Prism.highlightElement(block);
+            });
 
             // Copy button functionality
             document.querySelectorAll('.example').forEach((example) => {
@@ -454,15 +762,25 @@ chmod +x install.sh
 
                 button.addEventListener('click', async () => {
                     try {
-                        await navigator.clipboard.writeText(codeBlock.textContent);
+                        // Remove prompt symbols when copying
+                        const textToCopy = codeBlock.textContent.replace(/\$ /g, '');
+                        await navigator.clipboard.writeText(textToCopy);
+                        button.classList.add('copied');
                         button.textContent = 'Copied!';
+
                         setTimeout(() => {
+                            button.classList.remove('copied');
                             button.textContent = 'Copy';
                         }, 2000);
                     } catch (err) {
-                        button.textContent = 'Failed to copy';
+                        button.textContent = 'Failed';
+                        button.style.borderColor = '#ef4444';
+                        button.style.color = '#ef4444';
+
                         setTimeout(() => {
                             button.textContent = 'Copy';
+                            button.style.borderColor = '';
+                            button.style.color = '';
                         }, 2000);
                     }
                 });
