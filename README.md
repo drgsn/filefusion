@@ -360,7 +360,7 @@ documents:
     - Be specific with patterns
     - Test patterns before processing
 
-## ❗ Common Issues and Solutions
+## ❗ Issues and Solutions
 
 ### "no files found matching pattern"
 
