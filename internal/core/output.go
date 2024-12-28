@@ -4,45 +4,64 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"text/template"
 
 	"gopkg.in/yaml.v3"
 )
 
-// OutputGenerator handles the creation of output files in various formats (XML, JSON, YAML).
-// It implements safety measures such as:
-// - Using temporary files for atomic writes
-// - Size limit validation
-// - Proper error handling and cleanup
+// OutputGenerator handles the creation of output files in various formats
 type OutputGenerator struct {
-	options *MixOptions // Configuration options for output generation
+	options *MixOptions
+	workDir string // Current working directory for path normalization
 }
 
-// NewOutputGenerator creates a new OutputGenerator instance with the specified options.
-//
-// Parameters:
-//   - options: Configuration settings for output generation
-//
-// Returns:
-//   - A new OutputGenerator instance
-func NewOutputGenerator(options *MixOptions) *OutputGenerator {
-	return &OutputGenerator{options: options}
+// NewOutputGenerator creates a new OutputGenerator instance
+func NewOutputGenerator(options *MixOptions) (*OutputGenerator, error) {
+	workDir, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	return &OutputGenerator{
+		options: options,
+		workDir: workDir,
+	}, nil
 }
 
-// Generate creates an output file containing the provided file contents in the specified format.
-// The function implements a safe generation process:
-// 1. Creates a temporary file
-// 2. Writes content in the specified format
-// 3. Validates size constraints
-// 4. Atomically moves the file to its final location
-//
-// Parameters:
-//   - contents: Slice of FileContent to include in the output
-//
-// Returns:
-//   - error: nil if successful, otherwise describes what went wrong
+// normalizePath removes all but the last directory from the working directory path
+func (g *OutputGenerator) normalizePath(path string) string {
+	// Convert both paths to use forward slashes for consistent handling
+	path = filepath.ToSlash(path)
+	workDir := filepath.ToSlash(g.workDir)
+
+	// Get the last directory from workDir
+	lastDir := filepath.Base(workDir)
+
+	// Split the workDir into components
+	workDirComponents := strings.Split(workDir, "/")
+	if len(workDirComponents) > 1 {
+		// Remove all directories except the last one from the path
+		parentDir := strings.Join(workDirComponents[:len(workDirComponents)-1], "/")
+		if strings.HasPrefix(path, parentDir) {
+			path = strings.TrimPrefix(path, parentDir)
+			// Remove leading slash if present
+			path = strings.TrimPrefix(path, "/")
+		}
+	}
+
+	// If the path doesn't start with the last directory, add it
+	if !strings.HasPrefix(path, lastDir+"/") && !strings.HasPrefix(path, lastDir) {
+		path = filepath.Join(lastDir, path)
+	}
+
+	return filepath.ToSlash(path)
+}
+
+// Generate creates an output file containing the provided file contents
 func (g *OutputGenerator) Generate(contents []FileContent) error {
-	// Create a temporary file for safe writing
+	// Create a temporary file
 	tempFile, err := os.CreateTemp("", "filefusion-*")
 	if err != nil {
 		return &MixError{
@@ -51,16 +70,28 @@ func (g *OutputGenerator) Generate(contents []FileContent) error {
 		}
 	}
 	tempPath := tempFile.Name()
-	defer os.Remove(tempPath) // Clean up temp file in case of failure
+	defer os.Remove(tempPath)
+
+	// Normalize paths in contents
+	normalizedContents := make([]FileContent, len(contents))
+	for i, content := range contents {
+		normalizedContents[i] = FileContent{
+			Path:      g.normalizePath(content.Path),
+			Name:      content.Name,
+			Content:   content.Content,
+			Extension: content.Extension,
+			Size:      content.Size,
+		}
+	}
 
 	// Generate content in the specified format
 	switch g.options.OutputType {
 	case OutputTypeJSON:
-		err = g.generateJSON(tempFile, contents)
+		err = g.generateJSON(tempFile, normalizedContents)
 	case OutputTypeYAML:
-		err = g.generateYAML(tempFile, contents)
+		err = g.generateYAML(tempFile, normalizedContents)
 	case OutputTypeXML:
-		err = g.generateXML(tempFile, contents)
+		err = g.generateXML(tempFile, normalizedContents)
 	default:
 		return &MixError{Message: fmt.Sprintf("unsupported output type: %s", g.options.OutputType)}
 	}
@@ -69,10 +100,10 @@ func (g *OutputGenerator) Generate(contents []FileContent) error {
 		return err
 	}
 
-	// Close the temp file to ensure all content is written
+	// Close the temp file
 	tempFile.Close()
 
-	// Check the size of the generated file
+	// Check the size
 	info, err := os.Stat(tempPath)
 	if err != nil {
 		return &MixError{Message: fmt.Sprintf("error checking output file size: %v", err)}
@@ -89,17 +120,8 @@ func (g *OutputGenerator) Generate(contents []FileContent) error {
 	return os.Rename(tempPath, g.options.OutputPath)
 }
 
-// generateJSON creates a JSON output file with the provided file contents.
-// It wraps the contents in a "documents" array and writes it to the specified file.
-//
-// Parameters:
-//   - file: The file to write the JSON output to
-//   - contents: Slice of FileContent to include in the output
-//
-// Returns:
-//   - error: nil if successful, otherwise describes what went wrong
+// generateJSON creates a JSON output file
 func (g *OutputGenerator) generateJSON(file *os.File, contents []FileContent) error {
-	// Create wrapper structure for consistent output format
 	output := struct {
 		Documents []struct {
 			Index           int    `json:"index"`
@@ -114,7 +136,6 @@ func (g *OutputGenerator) generateJSON(file *os.File, contents []FileContent) er
 		}, len(contents)),
 	}
 
-	// Fill the structure
 	for i, content := range contents {
 		output.Documents[i] = struct {
 			Index           int    `json:"index"`
@@ -135,37 +156,21 @@ func (g *OutputGenerator) generateJSON(file *os.File, contents []FileContent) er
 	return nil
 }
 
-// generateYAML writes the content in YAML format with proper indentation.
-// The output maintains the same structure as JSON for consistency.
-//
-// Parameters:
-//   - file: Open file to write to
-//   - output: Interface containing the data to encode
-//
-// Returns:
-//   - error: nil if successful, error if encoding fails
-func (g *OutputGenerator) generateYAML(file *os.File, output interface{}) error {
-	// Use same structure as JSON for consistency
+// generateYAML writes the content in YAML format
+func (g *OutputGenerator) generateYAML(file *os.File, contents []FileContent) error {
 	docs := struct {
 		Documents []struct {
 			Index           int    `yaml:"index"`
 			Source          string `yaml:"source"`
 			DocumentContent string `yaml:"document_content"`
 		} `yaml:"documents"`
-	}{}
-
-	// Convert the input to []FileContent
-	contents, ok := output.([]FileContent)
-	if !ok {
-		return &MixError{Message: "invalid input type for YAML generation"}
+	}{
+		Documents: make([]struct {
+			Index           int    `yaml:"index"`
+			Source          string `yaml:"source"`
+			DocumentContent string `yaml:"document_content"`
+		}, len(contents)),
 	}
-
-	// Fill the structure
-	docs.Documents = make([]struct {
-		Index           int    `yaml:"index"`
-		Source          string `yaml:"source"`
-		DocumentContent string `yaml:"document_content"`
-	}, len(contents))
 
 	for i, content := range contents {
 		docs.Documents[i] = struct {
@@ -187,15 +192,7 @@ func (g *OutputGenerator) generateYAML(file *os.File, output interface{}) error 
 	return nil
 }
 
-// generateXML writes the content in XML format using a template.
-// The output includes proper XML declaration and document structure.
-//
-// Parameters:
-//   - file: Open file to write to
-//   - contents: Slice of FileContent to encode
-//
-// Returns:
-//   - error: nil if successful, error if template execution fails
+// generateXML writes the content in XML format
 func (g *OutputGenerator) generateXML(file *os.File, contents []FileContent) error {
 	const xmlTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 <documents>{{range $index, $file := .}}

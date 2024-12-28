@@ -1,3 +1,4 @@
+// Package core provides the core functionality for file finding and pattern matching.
 package core
 
 import (
@@ -5,149 +6,306 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
-// FileFinder is responsible for discovering files that match specified patterns
-// while respecting exclusion rules. It handles complex pattern matching including
-// glob patterns and directory-specific exclusions.
+// FileFinder handles file pattern matching and collection with support for
+// glob patterns, symlinks, and parallel processing.
 type FileFinder struct {
-	options *MixOptions // Configuration options for file discovery
+	includes       []string        // Glob patterns for files to include
+	excludes       []string        // Glob patterns for files to exclude
+	followSymlinks bool            // Whether to follow symbolic links
+	seenPaths      map[string]bool // Track real paths we've seen to prevent duplicates
+	seenLinks      map[string]bool // Track symlinks we've seen for reference
+	mu             sync.Mutex      // Protects concurrent access to seen maps
 }
 
-// NewFileFinder creates a new FileFinder instance with the specified options.
-//
-// Parameters:
-//   - options: Configuration settings for file discovery
-//
-// Returns:
-//   - A new FileFinder instance
-func NewFileFinder(options *MixOptions) *FileFinder {
-	return &FileFinder{options: options}
+// Result represents the outcome of a file finding operation.
+// It can contain either a matched file path or an error.
+type Result struct {
+	Path string // The path of the matched file
+	Err  error  // Any error encountered during processing
 }
 
-// FindFiles discovers all files in the input directory that match the configured patterns
-// while respecting exclusion rules. It uses filepath.WalkDir for efficient directory traversal
-// and implements sophisticated pattern matching for both inclusion and exclusion.
-//
-// The function handles:
-// - Multiple inclusion patterns (comma-separated)
-// - Multiple exclusion patterns (comma-separated)
-// - Special patterns like "**" for recursive matching
-// - .git directory exclusion
-//
-// Returns:
-//   - []string: Slice of matched file paths
-//   - error: Error if any occurs during file discovery
-func (f *FileFinder) FindFiles() ([]string, error) {
-	var matches []string
+// NewFileFinder creates a new FileFinder with the specified include and exclude patterns.
+// The followSymlinks parameter determines whether symbolic links should be followed.
+func NewFileFinder(includes, excludes []string, followSymlinks bool) *FileFinder {
+	return &FileFinder{
+		includes:       includes,
+		excludes:       excludes,
+		followSymlinks: followSymlinks,
+		seenPaths:      make(map[string]bool),
+		seenLinks:      make(map[string]bool),
+	}
+}
 
-	err := filepath.WalkDir(f.options.InputPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return fmt.Errorf("error accessing path %s: %w", path, err)
-		}
+// FindMatchingFiles returns all files that match the include patterns and don't match any exclude patterns.
+// It processes directories in parallel using a worker pool for improved performance.
+// Returns a slice of matched file paths and any error encountered during processing.
+func (ff *FileFinder) FindMatchingFiles(basePaths []string) ([]string, error) {
+	resultChan := make(chan Result)
+	var wg sync.WaitGroup
 
-		info, err := os.Stat(path)
-		if err != nil {
-			return fmt.Errorf("error getting file info for %s: %w", path, err)
-		}
+	// Create a worker pool sized to the number of available CPUs
+	numWorkers := runtime.GOMAXPROCS(0)
+	pathChan := make(chan string, len(basePaths))
 
-		if info.IsDir() {
-			// Skip .git directory entirely
-			if d.Name() == ".git" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		// Get path relative to input directory for pattern matching
-		relPath, err := filepath.Rel(f.options.InputPath, path)
-		if err != nil {
-			relPath = path // Fallback to full path if relative path fails
-		}
-
-		// Check if file matches patterns
-		match, err := f.matchesPattern(relPath, filepath.Base(path))
-		if err != nil {
-			return err
-		}
-
-		if match {
-			matches = append(matches, path)
-		}
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
+	// Start worker goroutines
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go ff.worker(pathChan, resultChan, &wg)
 	}
 
-	if len(matches) == 0 {
-		return nil, fmt.Errorf("no files found matching pattern(s) %q (excluding %q) in %s",
-			f.options.Pattern, f.options.Exclude, f.options.InputPath)
+	// Feed paths to workers in a separate goroutine
+	go func() {
+		for _, path := range basePaths {
+			pathChan <- path
+		}
+		close(pathChan)
+	}()
+
+	// Close result channel when all workers finish
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect and deduplicate results
+	var matches []string
+	seen := make(map[string]bool)
+	var firstErr error
+
+	for result := range resultChan {
+		if result.Err != nil {
+			// Store only the first error but continue processing
+			if firstErr == nil {
+				firstErr = result.Err
+			}
+			continue
+		}
+
+		// Deduplicate matches
+		if !seen[result.Path] {
+			matches = append(matches, result.Path)
+			seen[result.Path] = true
+		}
+	}
+
+	if firstErr != nil {
+		return matches, fmt.Errorf("errors occurred while finding files: %w", firstErr)
 	}
 
 	return matches, nil
 }
 
-// matchesPattern checks if a file matches the inclusion patterns while not matching
-// any exclusion patterns. It implements sophisticated pattern matching including:
-// - Glob pattern support
-// - Directory-specific exclusions using "**"
-// - Both filename and full path matching
-//
-// Parameters:
-//   - path: Full relative path to the file
-//   - filename: Base name of the file
-//
-// Returns:
-//   - bool: true if the file should be included, false otherwise
-//   - error: Error if pattern matching fails
-func (f *FileFinder) matchesPattern(path, filename string) (bool, error) {
-    // Pattern syntax is already validated at this point
-    if f.options.Exclude != "" {
-        excludePatterns := strings.Split(f.options.Exclude, ",")
-        for _, pattern := range excludePatterns {
-            pattern = strings.TrimSpace(pattern)
-            if pattern == "" {
-                continue
-            }
-            
-            pattern = filepath.FromSlash(pattern)
-            pathToCheck := filepath.FromSlash(path)
-            
-            if strings.Contains(pattern, "**") {
-                basePattern := strings.TrimSuffix(pattern, string(filepath.Separator)+"**")
-                basePattern = strings.TrimSuffix(basePattern, "**")
-                if strings.HasPrefix(pathToCheck, basePattern) {
-                    return false, nil
-                }
-            } else if strings.Contains(pattern, string(filepath.Separator)) {
-                matched, _ := filepath.Match(pattern, pathToCheck)
-                if matched {
-                    return false, nil
-                }
-            } else {
-                matched, _ := filepath.Match(pattern, filename)
-                if matched {
-                    return false, nil
-                }
-            }
-        }
-    }
+// processSymlink handles the processing of symbolic links, including cycle detection
+// and pattern matching for the linked file.
+func (ff *FileFinder) processSymlink(path string, resultChan chan<- Result) error {
+	// Resolve the actual file path that the symlink points to
+	realPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		// For broken symlinks, just log and continue rather than returning an error
+		fmt.Fprintf(os.Stderr, "Warning: Could not resolve symlink %q: %v\n", path, err)
+		return nil
+	}
 
-    patterns := strings.Split(f.options.Pattern, ",")
-    for _, pattern := range patterns {
-        pattern = strings.TrimSpace(pattern)
-        if pattern == "" {
-            continue
-        }
-        
-        matched, _ := filepath.Match(pattern, filename)
-        if matched {
-            return true, nil
-        }
-    }
-    
-    return false, nil
+	// Use mutex to safely check and update seen paths
+	ff.mu.Lock()
+	seenBefore := ff.seenPaths[realPath]
+	ff.seenPaths[realPath] = true
+	ff.mu.Unlock()
+
+	// Skip if we've seen this path before (prevents cycles)
+	if seenBefore {
+		return nil
+	}
+
+	// Get info about the real file
+	realInfo, err := os.Stat(realPath)
+	if err != nil {
+		// Log warning and continue for stat errors
+		fmt.Fprintf(os.Stderr, "Warning: Could not stat resolved symlink %q: %v\n", realPath, err)
+		return nil
+	}
+
+	// For directory symlinks, add the path to be processed
+	if realInfo.IsDir() {
+		return filepath.WalkDir(realPath, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			return ff.handleEntry(p, d, resultChan)
+		})
+	}
+
+	// Check if the symlink target matches our patterns
+	normalizedPath := filepath.ToSlash(path)
+	include, err := ff.shouldIncludeFile(normalizedPath)
+	if err != nil {
+		return err
+	}
+
+	if include {
+		resultChan <- Result{Path: path}
+	}
+	return nil
+}
+
+// processRegularFile handles the processing of regular (non-symlink) files,
+// including deduplication and pattern matching.
+func (ff *FileFinder) processRegularFile(path string, resultChan chan<- Result) error {
+	normalizedPath := filepath.ToSlash(path)
+
+	// Check if we've seen this file before
+	ff.mu.Lock()
+	seenBefore := ff.seenPaths[path]
+	ff.seenPaths[path] = true
+	ff.mu.Unlock()
+
+	if seenBefore {
+		return nil
+	}
+
+	// Check if the file matches our patterns
+	include, err := ff.shouldIncludeFile(normalizedPath)
+	if err != nil {
+		return err
+	}
+
+	if include {
+		resultChan <- Result{Path: path}
+	}
+	return nil
+}
+
+// handleEntry processes a single filesystem entry, determining its type
+// and delegating to the appropriate handler.
+func (ff *FileFinder) handleEntry(path string, d fs.DirEntry, resultChan chan<- Result) error {
+	info, err := d.Info()
+	if err != nil {
+		return fmt.Errorf("error getting file info for %q: %w", path, err)
+	}
+
+	// Handle symlinks specially if configured to follow them
+	if info.Mode()&os.ModeSymlink != 0 {
+		ff.mu.Lock()
+		ff.seenLinks[path] = true
+		ff.mu.Unlock()
+
+		if !ff.followSymlinks {
+			return nil
+		}
+		return ff.processSymlink(path, resultChan)
+	}
+
+	// Skip directories as they're handled by WalkDir
+	if d.IsDir() {
+		return nil
+	}
+
+	return ff.processRegularFile(path, resultChan)
+}
+
+// worker processes paths from pathChan, walking directories and sending results to resultChan.
+// It's designed to run concurrently with other workers.
+func (ff *FileFinder) worker(pathChan <-chan string, resultChan chan<- Result, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	for basePath := range pathChan {
+		// Convert to absolute path for consistent handling
+		absPath, err := filepath.Abs(basePath)
+		if err != nil {
+			resultChan <- Result{Err: fmt.Errorf("error resolving path %q: %w", basePath, err)}
+			continue
+		}
+
+		// Walk the directory tree
+		err = filepath.WalkDir(absPath, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				// For broken symlinks and permission errors, log and continue
+				if os.IsNotExist(err) || os.IsPermission(err) {
+					fmt.Fprintf(os.Stderr, "Warning: Skipping %s: %v\n", path, err)
+					return nil
+				}
+				return err
+			}
+			return ff.handleEntry(path, d, resultChan)
+		})
+
+		if err != nil {
+			resultChan <- Result{Err: fmt.Errorf("error walking path %q: %w", basePath, err)}
+		}
+	}
+}
+
+// GetRealPath returns the real filesystem path for a file, resolving any symbolic links.
+func (ff *FileFinder) GetRealPath(path string) (string, error) {
+	realPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("error resolving symlink %q: %w", path, err)
+	}
+
+	// On macOS, handle /private prefix
+	if runtime.GOOS == "darwin" && strings.HasPrefix(realPath, "/private") {
+		realPath = realPath[8:] // Remove "/private" prefix
+	}
+
+	return realPath, nil
+}
+
+// IsSymlink checks if the given path has been seen as a symbolic link during processing.
+func (ff *FileFinder) IsSymlink(path string) (bool, error) {
+	ff.mu.Lock()
+	defer ff.mu.Unlock()
+	return ff.seenLinks[path], nil
+}
+
+// matchPattern checks if a file matches a given pattern, handling both basename-only
+// and full path patterns appropriately.
+func (ff *FileFinder) matchPattern(pattern, path, basename string) (bool, error) {
+	// For patterns without path separators, match against basename only
+	if !strings.Contains(pattern, "/") {
+		return doublestar.Match(pattern, basename)
+	}
+	// For patterns with path separators, match against full path
+	return doublestar.Match(pattern, path)
+}
+
+// shouldIncludeFile determines whether a file should be included in the results
+// based on the configured include and exclude patterns.
+func (ff *FileFinder) shouldIncludeFile(path string) (bool, error) {
+	basename := filepath.Base(path)
+
+	// Check exclude patterns first - if any match, exclude the file
+	for _, pattern := range ff.excludes {
+		matched, err := ff.matchPattern(pattern, path, basename)
+		if err != nil {
+			return false, fmt.Errorf("invalid exclude pattern %q: %w", pattern, err)
+		}
+		if matched {
+			return false, nil
+		}
+	}
+
+	// If no include patterns specified, include all files not explicitly excluded
+	if len(ff.includes) == 0 {
+		return true, nil
+	}
+
+	// Check if file matches any include pattern
+	for _, pattern := range ff.includes {
+		matched, err := ff.matchPattern(pattern, path, basename)
+		if err != nil {
+			return false, fmt.Errorf("invalid include pattern %q: %w", pattern, err)
+		}
+		if matched {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }

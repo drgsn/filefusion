@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/drgsn/filefusion/internal/core"
@@ -12,21 +11,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// FileInfo represents basic information about a processed file
-type FileInfo struct {
-	Path string
-	Size int64
-}
-
 // Command-line flags
 var (
 	// Core flags
-	outputPath    string
-	pattern       string
-	exclude       string
-	maxFileSize   string
-	maxOutputSize string
-	dryRun        bool
+	outputPath     string
+	pattern        string
+	exclude        string
+	maxFileSize    string
+	maxOutputSize  string
+	dryRun         bool
+	ignoreSymlinks bool
 
 	// Cleaner flags
 	cleanEnabled         bool
@@ -62,6 +56,7 @@ func initCoreFlags() {
 	rootCmd.PersistentFlags().StringVar(&maxFileSize, "max-file-size", "10MB", "maximum size for individual input files")
 	rootCmd.PersistentFlags().StringVar(&maxOutputSize, "max-output-size", "50MB", "maximum size for output file")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Show the list of files that will be processed")
+	rootCmd.PersistentFlags().BoolVar(&ignoreSymlinks, "ignore-symlinks", false, "Ignore symbolic links when processing files")
 }
 
 // initCleanerFlags initializes the code cleaner flags
@@ -85,120 +80,150 @@ func main() {
 }
 
 // runMix implements the main program logic
-// In cmd/filefusion/main.go, modify the runMix function:
-
 func runMix(cmd *cobra.Command, args []string) error {
-    // Validate pattern first
-    if pattern == "" {
-        return fmt.Errorf("pattern cannot be empty")
-    }
+	// Validate and get initial configuration
+	config, err := validateAndGetConfig(args)
+	if err != nil {
+		return err
+	}
 
-    // Add pattern validation
-    if err := validatePattern(pattern); err != nil {
-        return err
-    }
-
-    args, err := validateAndGetPaths(args)
-    if err != nil {
-        return err
-    }
-
-    sizeLimits, err := parseSizeLimits()
-    if err != nil {
-        return err
-    }
-
-    outputType, err := validateOutputType()
-    if err != nil {
-        return err
-    }
-
-    return processInputPaths(args, sizeLimits, outputType)
-}
-
-func validatePattern(pattern string) error {
-    patterns := strings.Split(pattern, ",")
-    for _, p := range patterns {
-        p = strings.TrimSpace(p)
-        if p == "" {
-            continue
-        }
-        if _, err := filepath.Match(p, "test"); err != nil {
-            return fmt.Errorf("syntax error in pattern %q: %w", p, err)
-        }
-    }
-    return nil
-}
-
-// validateAndGetPaths validates input paths and returns them
-func validateAndGetPaths(args []string) ([]string, error) {
 	if len(args) == 0 {
 		currentDir, err := os.Getwd()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get current directory: %w", err)
+			return fmt.Errorf("error getting current working directory: %w", err)
 		}
 		args = []string{currentDir}
 	}
-	return args, nil
-}
 
-// parseSizeLimits parses the size limit flags
-func parseSizeLimits() (*struct{ maxFile, maxOutput int64 }, error) {
-	maxFileSizeBytes, err := parseSize(maxFileSize)
+	// Create file manager
+	fileManager := core.NewFileManager(config.MaxFileSize, config.MaxOutputSize, config.OutputType)
+
+	// Get list of files using FileFinder
+	finder := core.NewFileFinder(config.IncludePatterns, config.ExcludePatterns, !ignoreSymlinks)
+	files, err := finder.FindMatchingFiles(args)
 	if err != nil {
-		return nil, fmt.Errorf("invalid max-file-size value: %w", err)
+		return fmt.Errorf("error finding files: %w", err)
 	}
 
-	maxOutputSizeBytes, err := parseSize(maxOutputSize)
+	// Validate files against size limits
+	validFiles, err := fileManager.ValidateFiles(files)
 	if err != nil {
-		return nil, fmt.Errorf("invalid max-output-size value: %w", err)
+		return err
 	}
 
-	return &struct{ maxFile, maxOutput int64 }{
-		maxFile:   maxFileSizeBytes,
-		maxOutput: maxOutputSizeBytes,
-	}, nil
-}
-
-// validateOutputType validates and returns the output type
-func validateOutputType() (core.OutputType, error) {
-	if outputPath == "" {
-		return core.OutputTypeXML, nil
+	if dryRun {
+		fmt.Println("\nDry run complete. No files will be processed.")
+		return nil
 	}
 
-	ext := strings.ToLower(filepath.Ext(outputPath))
-	switch ext {
-	case ".json":
-		return core.OutputTypeJSON, nil
-	case ".yaml", ".yml":
-		return core.OutputTypeYAML, nil
-	case ".xml":
-		return core.OutputTypeXML, nil
-	default:
-		return "", fmt.Errorf("invalid output file extension: must be .xml, .json, .yaml, or .yml")
+	// Get output paths
+	outputPaths, err := fileManager.DeriveOutputPaths(args, outputPath)
+	if err != nil {
+		return err
 	}
-}
 
-// processInputPaths processes each input path
-func processInputPaths(args []string, sizes *struct{ maxFile, maxOutput int64 }, outputType core.OutputType) error {
-	cleanerOpts := createCleanerOptions()
+	// Group files by output path
+	fileGroups, err := fileManager.GroupFilesByOutput(validFiles, outputPaths)
+	if err != nil {
+		return err
+	}
 
-	for _, inputPath := range args {
-		if err := processPath(inputPath, sizes, outputType, cleanerOpts); err != nil {
-			return err
+	// Process each group and generate output
+	for _, group := range fileGroups {
+		// Create processor for this group
+		processor := core.NewFileProcessor(&core.MixOptions{
+			MaxFileSize:    config.MaxFileSize,
+			MaxOutputSize:  config.MaxOutputSize,
+			OutputType:     config.OutputType,
+			CleanerOptions: config.CleanerOptions,
+		})
+
+		// Process files
+		contents, err := processor.ProcessFiles(group.Files)
+		if err != nil {
+			return fmt.Errorf("error processing files for %s: %w", group.OutputPath, err)
 		}
 
-		if outputPath != "" {
-			fmt.Println("Note: Using specified output path. Additional inputs will be ignored.")
-			break
+		// Generate output
+		generator, err := core.NewOutputGenerator(&core.MixOptions{
+			OutputPath:    group.OutputPath,
+			OutputType:    config.OutputType,
+			MaxOutputSize: config.MaxOutputSize,
+		})
+		if err != nil {
+			return fmt.Errorf("error creating output: %w", err)
 		}
+
+		if err := generator.Generate(contents); err != nil {
+			return fmt.Errorf("error generating output for %s: %w", group.OutputPath, err)
+		}
+
+		fmt.Printf("Generated output: %s\n", group.OutputPath)
 	}
 
 	return nil
 }
 
-// createCleanerOptions creates cleaner options if cleaning is enabled
-func createCleanerOptions() *cleaner.CleanerOptions {
+// Config holds the validated configuration for processing
+type Config struct {
+	IncludePatterns []string
+	ExcludePatterns []string
+	MaxFileSize     int64
+	MaxOutputSize   int64
+	OutputType      core.OutputType
+	CleanerOptions  *cleaner.CleanerOptions
+}
+
+// validateAndGetConfig validates inputs and returns a Config struct
+func validateAndGetConfig(args []string) (*Config, error) {
+	if pattern == "" {
+		return nil, fmt.Errorf("pattern cannot be empty")
+	}
+
+	validator := core.NewPatternValidator()
+	includePatterns, err := validator.ExpandPattern(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid include pattern: %w", err)
+	}
+
+	var excludePatterns []string
+	if exclude != "" {
+		excludePatterns, err = validator.ExpandPattern(exclude)
+		if err != nil {
+			return nil, fmt.Errorf("invalid exclude pattern: %w", err)
+		}
+	}
+
+	fileManager := core.NewFileManager(0, 0, core.OutputTypeXML) // Temporary instance for parsing
+	maxFileSizeBytes, err := fileManager.ParseSize(maxFileSize)
+	if err != nil {
+		return nil, fmt.Errorf("invalid max-file-size value: %w", err)
+	}
+
+	maxOutputSizeBytes, err := fileManager.ParseSize(maxOutputSize)
+	if err != nil {
+		return nil, fmt.Errorf("invalid max-output-size value: %w", err)
+	}
+
+	outputType, err := validateAndGetOutputType(outputPath)
+	if err != nil {
+		return nil, err
+	}
+
+	cleanerOpts := getCleanerOptions()
+
+	return &Config{
+		IncludePatterns: includePatterns,
+		ExcludePatterns: excludePatterns,
+		MaxFileSize:     maxFileSizeBytes,
+		MaxOutputSize:   maxOutputSizeBytes,
+		OutputType:      outputType,
+		CleanerOptions:  cleanerOpts,
+	}, nil
+}
+
+// getCleanerOptions creates cleaner options based on command-line flags
+func getCleanerOptions() *cleaner.CleanerOptions {
 	if !cleanEnabled {
 		return nil
 	}
@@ -214,250 +239,21 @@ func createCleanerOptions() *cleaner.CleanerOptions {
 	}
 }
 
-// processPath processes a single input path
-func processPath(inputPath string, sizes *struct{ maxFile, maxOutput int64 }, outputType core.OutputType, cleanerOpts *cleaner.CleanerOptions) error {
-	currentOutputPath := getOutputPath(inputPath)
-
-	options := &core.MixOptions{
-		InputPath:      inputPath,
-		OutputPath:     currentOutputPath,
-		Pattern:        pattern,
-		Exclude:        exclude,
-		MaxFileSize:    sizes.maxFile,
-		MaxOutputSize:  sizes.maxOutput,
-		OutputType:     outputType,
-		CleanerOptions: cleanerOpts,
+// validateOutputType validates and returns the output type
+func validateAndGetOutputType(outputPath string) (core.OutputType, error) {
+	if outputPath == "" {
+		return core.OutputTypeXML, nil
 	}
 
-	files, totalSize, err := scanFiles(options)
-	if err != nil {
-		return fmt.Errorf("error processing %s: %w", inputPath, err)
-	}
-
-	if err := displaySummary(inputPath, files, totalSize); err != nil {
-		return err
-	}
-
-	if dryRun {
-		fmt.Println("\nDry run complete. No files will be processed.")
-		return nil
-	}
-
-	return finalizeProcessing(options, files, totalSize)
-}
-
-// getOutputPath determines the output path for the current input
-func getOutputPath(inputPath string) string {
-	if outputPath != "" {
-		return outputPath
-	}
-	return deriveOutputPath(inputPath)
-}
-
-// deriveOutputPath generates an output file path based on the input path
-func deriveOutputPath(inputPath string) string {
-	base := filepath.Base(strings.TrimSuffix(inputPath, string(os.PathSeparator)))
-	if ext := filepath.Ext(base); ext != "" {
-		return base + ".xml"
-	}
-	return base + ".xml"
-}
-
-// displaySummary shows the processing summary
-func displaySummary(inputPath string, files []FileInfo, totalSize int64) error {
-	fmt.Printf("Processing %s:\n", inputPath)
-	fmt.Printf("Found %d files matching pattern\n", len(files))
-	if cleanEnabled {
-		fmt.Printf("Uncompressed size: %s\n", formatSize(totalSize))
-		fmt.Printf("Final size (with --clean): will be calculated after processing\n")
-	} else {
-		fmt.Printf("Total size: %s\n", formatSize(totalSize))
-	}
-
-	fmt.Println("\nMatched files:")
-	for _, file := range files {
-		fmt.Printf("- %s (%s)\n", file.Path, formatSize(file.Size))
-	}
-
-	return nil
-}
-
-// finalizeProcessing performs the final processing steps
-func finalizeProcessing(options *core.MixOptions, files []FileInfo, totalSize int64) error {
-	if totalSize > options.MaxOutputSize {
-		return fmt.Errorf("output size (%s) exceeds maximum allowed size (%s)",
-			formatSize(totalSize), formatSize(options.MaxOutputSize))
-	}
-
-	mixer := core.NewMixer(options)
-	if err := mixer.Mix(); err != nil {
-		return fmt.Errorf("error mixing %s: %w", options.InputPath, err)
-	}
-
-	// Display final size if clean is enabled
-	if cleanEnabled {
-		if info, err := os.Stat(options.OutputPath); err == nil {
-			fmt.Printf("\nFinal size (with --clean): %s\n", formatSize(info.Size()))
-		}
-	}
-
-	return nil
-}
-
-// scanFiles discovers and validates files to be processed
-func scanFiles(options *core.MixOptions) ([]FileInfo, int64, error) {
-	var files []FileInfo
-	var totalSize int64
-
-	patterns := strings.Split(options.Pattern, ",")
-	for i := range patterns {
-		patterns[i] = strings.TrimSpace(patterns[i])
-	}
-
-	var excludePatterns []string
-	if options.Exclude != "" {
-		excludePatterns = strings.Split(options.Exclude, ",")
-		for i := range excludePatterns {
-			excludePatterns[i] = strings.TrimSpace(excludePatterns[i])
-		}
-	}
-
-	err := filepath.Walk(options.InputPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if info.IsDir() {
-			if filepath.Base(path) == ".git" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		relPath, err := filepath.Rel(options.InputPath, path)
-		if err != nil {
-			relPath = path
-		}
-
-		if shouldIncludeFile(relPath, patterns, excludePatterns, info, options.MaxFileSize) {
-			files = append(files, FileInfo{
-				Path: relPath,
-				Size: info.Size(),
-			})
-			totalSize += info.Size()
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, 0, err
-	}
-
-	if len(files) == 0 {
-		return nil, 0, fmt.Errorf("no files found matching pattern(s) %q (excluding %q) in %s",
-			options.Pattern, options.Exclude, options.InputPath)
-	}
-
-	return files, totalSize, nil
-}
-
-// shouldIncludeFile determines if a file should be included in processing
-func shouldIncludeFile(relPath string, patterns, excludePatterns []string, info os.FileInfo, maxSize int64) bool {
-	// Check exclusions first
-	for _, pattern := range excludePatterns {
-		if pattern == "" {
-			continue
-		}
-
-		if matchesExcludePattern(pattern, relPath) {
-			return false
-		}
-	}
-
-	// Check size limit
-	if info.Size() > maxSize {
-		return false
-	}
-
-	// Check inclusion patterns
-	for _, pattern := range patterns {
-		if pattern == "" {
-			continue
-		}
-
-		match, err := filepath.Match(pattern, filepath.Base(relPath))
-		if err == nil && match {
-			return true
-		}
-	}
-
-	return false
-}
-
-// matchesExcludePattern checks if a path matches an exclude pattern
-func matchesExcludePattern(pattern, path string) bool {
-	if strings.Contains(pattern, "**") {
-		pattern = strings.ReplaceAll(pattern, "**", "*")
-		matched, _ := filepath.Match(pattern, path)
-		return matched
-	}
-
-	matched, _ := filepath.Match(pattern, path)
-	return matched
-}
-
-// parseSize converts a size string to bytes
-func parseSize(size string) (int64, error) {
-	size = strings.ToUpper(strings.ReplaceAll(size, " ", ""))
-	if size == "" {
-		return 0, fmt.Errorf("size cannot be empty")
-	}
-
-	var multiplier int64 = 1
-	var value string
-
-	switch {
-	case strings.HasSuffix(size, "TB"):
-		multiplier = 1024 * 1024 * 1024 * 1024
-		value = strings.TrimSuffix(size, "TB")
-	case strings.HasSuffix(size, "GB"):
-		multiplier = 1024 * 1024 * 1024
-		value = strings.TrimSuffix(size, "GB")
-	case strings.HasSuffix(size, "MB"):
-		multiplier = 1024 * 1024
-		value = strings.TrimSuffix(size, "MB")
-	case strings.HasSuffix(size, "KB"):
-		multiplier = 1024
-		value = strings.TrimSuffix(size, "KB")
-	case strings.HasSuffix(size, "B"):
-		value = strings.TrimSuffix(size, "B")
+	ext := strings.ToLower(filepath.Ext(outputPath))
+	switch ext {
+	case ".json":
+		return core.OutputTypeJSON, nil
+	case ".yaml", ".yml":
+		return core.OutputTypeYAML, nil
+	case ".xml":
+		return core.OutputTypeXML, nil
 	default:
-		return 0, fmt.Errorf("invalid size format: must end with B, KB, MB, GB, or TB")
+		return "", fmt.Errorf("invalid output file extension: must be .xml, .json, .yaml, or .yml")
 	}
-
-	num, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid size number: %w", err)
-	}
-
-	if num <= 0 {
-		return 0, fmt.Errorf("size must be a positive number")
-	}
-
-	return num * multiplier, nil
-}
-
-// formatSize converts bytes to a human-readable string
-func formatSize(bytes int64) string {
-	const unit = 1024
-	if bytes < unit {
-		return fmt.Sprintf("%d B", bytes)
-	}
-	div, exp := int64(unit), 0
-	for n := bytes / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
