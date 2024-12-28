@@ -57,6 +57,35 @@ go install github.com/drgsn/filefusion/cmd/filefusion@latest
 
 Or download the latest binary for your platform from the [releases page](https://github.com/drgsn/filefusion/releases).
 
+
+## 🗑️ Uninstallation
+
+To uninstall FileFusion:
+
+1. Remove the installation directory:
+```bash
+rm -rf ~/.filefusion 
+```
+
+2. Remove FileFusion from your shell configuration file. Depending on your shell and OS, edit one of these files:
+- macOS Bash users: `~/.bash_profile`
+- Linux Bash users: `~/.bashrc`
+- Zsh users: `~/.zshrc`
+- Fish users: `~/.config/fish/config.fish`
+- Windows PowerShell users: `$HOME/Documents/PowerShell/Microsoft.PowerShell_profile.ps1`
+
+Look for and remove these two lines:
+```bash
+# FileFusion
+export PATH="$PATH:$HOME/.filefusion"
+```
+
+### Go Installation
+If you installed using Go:
+```bash
+go clean -i github.com/drgsn/filefusion/cmd/filefusion
+```
+
 ## 📋 Default Values
 
 | Setting         | Default Value              | Description                |
