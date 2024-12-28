@@ -64,26 +64,7 @@ func (h *CSharpHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
 	case "property_declaration":
 		accessorList := node.ChildByFieldName("accessors")
 		if accessorList != nil {
-			hasGetter := false
-			hasSetter := false
-
-			for i := 0; i < int(accessorList.ChildCount()); i++ {
-				accessor := accessorList.Child(i)
-
-				if accessor.Type() != "accessor_declaration" {
-					// Skip unsupported accessor node types
-					continue
-				}
-
-				text := string(content[accessor.StartByte():accessor.EndByte()])
-				if strings.Contains(text, "get") {
-					hasGetter = true
-				}
-				if strings.Contains(text, "set") {
-					hasSetter = true
-				}
-			}
-			return hasGetter || hasSetter
+			return hasAccessor(accessorList, content)
 		}
 		return false
 
@@ -109,17 +90,24 @@ func (h *CSharpHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
 
 // Helper function to check for `get` or `set` in a block
 func hasAccessor(block *sitter.Node, content []byte) bool {
+	if block == nil {
+		return false
+	}
+
 	hasGetter := false
 	hasSetter := false
 
-	for i := 0; i < int(block.ChildCount()); i++ {
-		child := block.Child(i)
-		if child.Type() == "ERROR" {
-			// Interpret `ERROR` nodes as `get` or `set`
-			text := string(content[child.StartByte():child.EndByte()])
-			if text == "get" {
+	cursor := sitter.NewTreeCursor(block)
+	defer cursor.Close()
+
+	for ok := cursor.GoToFirstChild(); ok; ok = cursor.GoToNextSibling() {
+		node := cursor.CurrentNode()
+		if node.Type() == "accessor_declaration" {
+			text := string(content[node.StartByte():node.EndByte()])
+			if strings.Contains(text, "get") {
 				hasGetter = true
-			} else if text == "set" {
+			}
+			if strings.Contains(text, "set") {
 				hasSetter = true
 			}
 		}
