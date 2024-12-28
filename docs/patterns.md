@@ -28,18 +28,9 @@
     -   `settings.yaml`
     -   `nested/data.json`
 
-#### Match files in a specific subdirectory:
-
--   **Pattern**: `src/*.go`
--   **Matches**:
-    -   `src/main.go`
-    -   `src/helpers.go`
--   **Does not match**:
-    -   `utils/test.go`
-
 #### Recursive match for all `.txt` files in nested directories:
 
--   **Pattern**: `**/*.txt`
+-   **Pattern**: `*.txt`
 -   **Matches**:
     -   `logs/errors.txt`
     -   `nested/directory/notes.txt`
@@ -141,26 +132,23 @@
 
 ```bash
 # Include all Go-related files
-filefusion -p "*.go,*.mod,*.sum" ./my-project
+filefusion -p "*.go,*.mod,*.sum" .
 
 # Include Go files but exclude tests
-filefusion -p "*.go" -e "*_test.go" ./my-project
-
-# Process only internal packages
-filefusion -p "internal/**/*.go" ./my-project
+filefusion -p "*.go" -e "*_test.go" .
 ```
 
 ### Web Project
 
 ```bash
 # Process frontend source files
-filefusion -p "src/**/*.{js,ts,jsx,tsx,css,scss}" ./web-app
+filefusion -p "*.{js,ts,jsx,tsx,css,scss}" /src
 
 # Include configuration but exclude build artifacts
-filefusion -p "*.{js,json,yaml,env}" -e "dist/**,build/**" ./web-app
+filefusion -p "*.{js,json,yaml,env}" -e "dist/**,build/**" 
 
 # Process only React components
-filefusion -p "src/components/**/*.{jsx,tsx}" ./web-app
+filefusion -p "*.{jsx,tsx}" src/components/
 ```
 
 ### Complex Patterns
@@ -168,21 +156,21 @@ filefusion -p "src/components/**/*.{jsx,tsx}" ./web-app
 ```bash
 # Multiple file types and exclusions
 filefusion \
-  -p "*.go,internal/**/*.go,cmd/**/*.go,*.yaml,*.json" \
+  -p "*.go,*.yaml,*.json" \
   -e "**/*_test.go,vendor/**,**/testdata/**" \
-  ./project
+  internal cmd
+# will generate 2 output files internal.xml and cmd.xml
 
 # Specific directory patterns with multiple exclusions
 filefusion \
-  -p "src/**/*.{js,ts},config/*.{json,yaml},scripts/*.sh" \
-  -e "**/*.test.{js,ts},**/__tests__/**,**/node_modules/**" \
-  ./web-app
+  -p "*.{js,ts}, *.{json,yaml},*.sh" \
+  -e "**/*.test.{js,ts},**/__tests__/**,**/node_modules/**" 
 
 # Documentation and configuration files
 filefusion \
-  -p "docs/**/*.md,*.{yaml,yml,json},config/**/*" \
+  -p "*.md,*.{yaml,yml,json}" \
   -e "**/draft/**,**/.git/**,private/**" \
-  ./project
+  .
 ```
 
 ### Language-Specific Examples
@@ -190,21 +178,21 @@ filefusion \
 ```bash
 # Python project
 filefusion \
-  -p "**/*.{py,ipynb},requirements.txt,setup.py" \
+  -p "*.{py,ipynb},requirements.txt,setup.py" \
   -e "**/__pycache__/**,**/*.pyc,venv/**" \
-  ./python-project
+  .
 
 # Java/Kotlin project
 filefusion \
-  -p "src/**/*.{java,kt},build.gradle,pom.xml" \
+  -p "*.{java,kt},build.gradle,pom.xml" \
   -e "**/build/**,**/target/**,**/*Test.{java,kt}" \
-  ./java-project
+  . src
 
 # Full-stack project
 filefusion \
-  -p "backend/**/*.go,frontend/src/**/*.{ts,tsx},*.yaml" \
+  -p "*.go,*.{ts,tsx},*.yaml" \
   -e "**/node_modules/**,**/dist/**,**/*_test.go" \
-  ./fullstack-app
+  . backend frontend/src
 ```
 
 ## ⚠️ Notes on Validation
@@ -214,9 +202,9 @@ filefusion \
 -   **Pattern**: `***`
     -   **Error**: "invalid pattern: contains invalid glob pattern '\*\*\*'"
 
-### Glob Confusion
+### Glob Confusion 
 
--   **Valid**: `**/file.*`, `**/*.txt`
+-   **Valid For Exclusion**: `**/file.*`, `**/*.txt`
 -   **Invalid**: `***/*.txt` (returns an error)
 
 ---
