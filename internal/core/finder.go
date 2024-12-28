@@ -117,6 +117,7 @@ func (ff *FileFinder) processSymlink(path string, resultChan chan<- Result) erro
 	ff.mu.Lock()
 	seenBefore := ff.seenPaths[realPath]
 	ff.seenPaths[realPath] = true
+	ff.seenLinks[path] = true
 	ff.mu.Unlock()
 
 	// Skip if we've seen this path before (prevents cycles)
@@ -142,14 +143,21 @@ func (ff *FileFinder) processSymlink(path string, resultChan chan<- Result) erro
 		})
 	}
 
-	// Check if the symlink target matches our patterns
+	// Check if either the symlink or its target matches our patterns
 	normalizedPath := filepath.ToSlash(path)
-	include, err := ff.shouldIncludeFile(normalizedPath)
+	normalizedRealPath := filepath.ToSlash(realPath)
+
+	includeSymlink, err := ff.shouldIncludeFile(normalizedPath)
 	if err != nil {
 		return err
 	}
 
-	if include {
+	includeTarget, err := ff.shouldIncludeFile(normalizedRealPath)
+	if err != nil {
+		return err
+	}
+
+	if includeSymlink || includeTarget {
 		resultChan <- Result{Path: path}
 	}
 	return nil
