@@ -1,0 +1,6320 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<documents>
+<document index="1">
+<source>filefusion/internal/core/cleaner/handlers/bash_handler.go</source>
+<document_content>package handlers
+import (
+	"strings"
+	sitter "github.com/smacker/go-tree-sitter"
+)
+type BashHandler struct {
+	BaseHandler
+}
+func (h *BashHandler) GetCommentTypes() []string {
+	return []string{"comment"}
+}
+func (h *BashHandler) GetImportTypes() []string {
+	return []string{"source_command", "command"}
+}
+func (h *BashHandler) GetDocCommentPrefix() string {
+	return "#"
+}
+func (h *BashHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
+	if node == nil {
+		return false
+	}
+	nodeType := node.Type()
+	if nodeType == "redirected_statement" {
+		return true
+	}
+	if nodeType != "command" {
+		return false
+	}
+	if node.StartByte() >= uint32(len(content)) || node.EndByte() > uint32(len(content)) {
+		return false
+	}
+	cmdText := string(content[node.StartByte():node.EndByte()])
+	return strings.Contains(cmdText, "logger") ||
+		strings.Contains(cmdText, "echo \"Debug") ||
+		strings.Contains(cmdText, "printf \"Debug")
+}
+func (h *BashHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
+	return false
+}
+</document_content>
+</document>
+<document index="2">
+<source>filefusion/internal/core/cleaner/handlers/base_handler.go</source>
+<document_content>package handlers
+import (
+	"strings"
+	sitter "github.com/smacker/go-tree-sitter"
+)
+type LanguageHandler interface {
+	GetCommentTypes() []string
+	GetImportTypes() []string
+	GetDocCommentPrefix() string
+	IsLoggingCall(node *sitter.Node, content []byte) bool
+	IsGetterSetter(node *sitter.Node, content []byte) bool
+}
+type BaseHandler struct{}
+func (h *BaseHandler) IsMethodNamed(node *sitter.Node, content []byte, prefix string) bool {
+	if node.Type() != "method_declaration" &&
+		node.Type() != "function_declaration" &&
+		node.Type() != "getter_declaration" &&
+		node.Type() != "method_definition" {
+		return false
+	}
+	nameNode := node.ChildByFieldName("name")
+	if nameNode == nil {
+		return false
+	}
+	name := string(content[nameNode.StartByte():nameNode.EndByte()])
+	return strings.HasPrefix(strings.ToLower(name), strings.ToLower(prefix))
+}
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, v := range a {
+		if v != b[i] {
+			return false
+		}
+	}
+	return true
+}
+</document_content>
+</document>
+<document index="3">
+<source>filefusion/internal/core/cleaner/handlers/base_handler_test.go</source>
+<document_content>package handlers
+import (
+	"testing"
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/golang"
+)
+func TestBaseHandler(t *testing.T) {
+	handler := &BaseHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(golang.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		prefix   string
+		expected bool
+	}{
+		{
+			name:     "get method",
+			input:    "package main\nfunc GetName() string { return name }",
+			prefix:   "Get",
+			expected: true,
+		},
+		{
+			name:     "set method",
+			input:    "package main\nfunc SetName(name string) { this.name = name }",
+			prefix:   "Set",
+			expected: true,
+		},
+		{
+			name:     "non-matching method",
+			input:    "package main\nfunc Process() error { return nil }",
+			prefix:   "Get",
+			expected: false,
+		},
+		{
+			name:     "case insensitive match",
+			input:    "package main\nfunc getName() string { return name }",
+			prefix:   "Get",
+			expected: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			var funcNode *sitter.Node
+			cursor := sitter.NewTreeCursor(tree.RootNode())
+			defer cursor.Close()
+			ok := cursor.GoToFirstChild()
+			for ok {
+				if cursor.CurrentNode().Type() == "function_declaration" {
+					funcNode = cursor.CurrentNode()
+					break
+				}
+				ok = cursor.GoToNextSibling()
+			}
+			if funcNode == nil {
+				t.Fatal("No function declaration found")
+			}
+			if got := handler.IsMethodNamed(funcNode, []byte(tt.input), tt.prefix); got != tt.expected {
+				t.Errorf("IsMethodNamed() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+</document_content>
+</document>
+<document index="4">
+<source>filefusion/internal/core/cleaner/handlers/css_handler.go</source>
+<document_content>package handlers
+import (
+	sitter "github.com/smacker/go-tree-sitter"
+)
+type CSSHandler struct {
+	BaseHandler
+}
+func (h *CSSHandler) GetCommentTypes() []string {
+	return []string{"comment"}
+}
+func (h *CSSHandler) GetImportTypes() []string {
+	return []string{"import_statement", "@import"}
+}
+func (h *CSSHandler) GetDocCommentPrefix() string {
+	return "/*"
+}
+func (h *CSSHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
+	return false
+}
+func (h *CSSHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
+	return false
+}
+</document_content>
+</document>
+<document index="5">
+<source>filefusion/internal/core/cleaner/handlers/cpp_handler.go</source>
+<document_content>package handlers
+import (
+	"bytes"
+	"strings"
+	sitter "github.com/smacker/go-tree-sitter"
+)
+type CPPHandler struct {
+	BaseHandler
+}
+func (h *CPPHandler) GetCommentTypes() []string {
+	return []string{"comment", "multiline_comment"}
+}
+func (h *CPPHandler) GetImportTypes() []string {
+	return []string{"preproc_include", "using_declaration"}
+}
+func (h *CPPHandler) GetDocCommentPrefix() string {
+	return "///"
+}
+func (h *CPPHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
+	if node == nil || (node.Type() != "call_expression" && node.Type() != "binary_expression") {
+		return false
+	}
+	if node.StartByte() >= uint32(len(content)) || node.EndByte() > uint32(len(content)) {
+		return false
+	}
+	callText := content[node.StartByte():node.EndByte()]
+	return bytes.Contains(callText, []byte("cout")) ||
+		bytes.Contains(callText, []byte("cerr")) ||
+		bytes.Contains(callText, []byte("clog")) ||
+		bytes.Contains(callText, []byte("printf")) ||
+		bytes.Contains(callText, []byte("fprintf")) ||
+		bytes.Contains(callText, []byte("log"))
+}
+func (h *CPPHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
+	if node == nil || (node.Type() != "function_definition" && node.Type() != "function_declarator") {
+		return false
+	}
+	if node.StartByte() >= uint32(len(content)) || node.EndByte() > uint32(len(content)) {
+		return false
+	}
+	funcText := string(content[node.StartByte():node.EndByte()])
+	isGetter := (strings.Contains(strings.ToLower(funcText), "get") && !strings.Contains(strings.ToLower(funcText), "getvalue")) ||
+		(strings.Contains(strings.ToLower(funcText), "is") && !strings.Contains(strings.ToLower(funcText), "isvalue"))
+	isSetter := strings.Contains(funcText, "set") ||
+		strings.Contains(funcText, "Set")
+	if isGetter {
+		return !strings.Contains(funcText, "void") &&
+			strings.Count(funcText, ",") == 0
+	}
+	if isSetter {
+		return strings.Contains(funcText, "void") &&
+			strings.Count(funcText, ",") <= 1
+	}
+	return false
+}
+</document_content>
+</document>
+<document index="6">
+<source>filefusion/internal/core/cleaner/handlers/css_handler_test.go</source>
+<document_content>package handlers
+import (
+	"testing"
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/css"
+)
+func TestCSSHandlerBasics(t *testing.T) {
+	handler := &CSSHandler{}
+	commentTypes := handler.GetCommentTypes()
+	expected := []string{"comment"}
+	if !stringSliceEqual(commentTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, commentTypes)
+	}
+	importTypes := handler.GetImportTypes()
+	expected = []string{"import_statement", "@import"}
+	if !stringSliceEqual(importTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, importTypes)
+	}
+	if prefix := handler.GetDocCommentPrefix(); prefix != "/*" {
+		t.Errorf("Expected '/*', got %s", prefix)
+	}
+}
+func TestCSSLoggingCalls(t *testing.T) {
+	handler := &CSSHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(css.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "regular rule",
+			input:    ".class { color: red; }",
+			expected: false,
+		},
+		{
+			name:     "import statement",
+			input:    "@import 'styles.css';",
+			expected: false,
+		},
+		{
+			name:     "media query",
+			input:    "@media screen { body { color: blue; } }",
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			result := handler.IsLoggingCall(node, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsLoggingCall() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+	if handler.IsLoggingCall(nil, []byte("")) {
+		t.Error("Expected IsLoggingCall to return false for nil node")
+	}
+}
+func TestCSSGetterSetter(t *testing.T) {
+	handler := &CSSHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(css.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "regular rule",
+			input:    ".class { color: red; }",
+			expected: false,
+		},
+		{
+			name:     "pseudo class",
+			input:    ".class:hover { color: blue; }",
+			expected: false,
+		},
+		{
+			name:     "variable declaration",
+			input:    ":root { --main-color: blue; }",
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			result := handler.IsGetterSetter(node, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsGetterSetter() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+	if handler.IsGetterSetter(nil, []byte("")) {
+		t.Error("Expected IsGetterSetter to return false for nil node")
+	}
+}
+</document_content>
+</document>
+<document index="7">
+<source>filefusion/internal/core/cleaner/handlers/go_handler.go</source>
+<document_content>package handlers
+import (
+	"bytes"
+	"strings"
+	sitter "github.com/smacker/go-tree-sitter"
+)
+type GoHandler struct {
+	BaseHandler
+}
+func (h *GoHandler) GetCommentTypes() []string {
+	return []string{"comment"}
+}
+func (h *GoHandler) GetImportTypes() []string {
+	return []string{"import_declaration", "import_spec"}
+}
+func (h *GoHandler) GetDocCommentPrefix() string {
+	return "///"
+}
+func (h *GoHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
+	if node.Type() != "call_expression" {
+		return false
+	}
+	callText := content[node.StartByte():node.EndByte()]
+	return  ||
+		 ||
+		 ||
+}
+func (h *GoHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
+	if node.Type() != "function_declaration" {
+		return false
+	}
+	nameNode := node.ChildByFieldName("name")
+	if nameNode == nil {
+		return false
+	}
+	name := string(content[nameNode.StartByte():nameNode.EndByte()])
+	return strings.HasPrefix(strings.ToLower(name), "get") ||
+		strings.HasPrefix(strings.ToLower(name), "set")
+}
+</document_content>
+</document>
+<document index="8">
+<source>filefusion/internal/core/cleaner/handlers/bash_handler_test.go</source>
+<document_content>package handlers
+import (
+	"strings"
+	"testing"
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/bash"
+)
+func TestBashHandlerBasics(t *testing.T) {
+	handler := &BashHandler{}
+	commentTypes := handler.GetCommentTypes()
+	if len(commentTypes) != 1 || commentTypes[0] != "comment" {
+		t.Errorf("Expected ['comment'], got %v", commentTypes)
+	}
+	importTypes := handler.GetImportTypes()
+	if len(importTypes) != 2 || importTypes[0] != "source_command" || importTypes[1] != "command" {
+		t.Errorf("Expected ['source_command', 'command'], got %v", importTypes)
+	}
+	if prefix := handler.GetDocCommentPrefix(); prefix != "#" {
+		t.Errorf("Expected '#', got %s", prefix)
+	}
+}
+func TestBashLoggingCalls(t *testing.T) {
+	handler := &BashHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(bash.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "stderr redirection",
+			input:    "echo 'Error' >&2",
+			expected: true,
+		},
+		{
+			name:     "logger command",
+			input:    "logger 'System startup complete'",
+			expected: true,
+		},
+		{
+			name:     "debug echo",
+			input:    "echo \"Debug: process started\"",
+			expected: true,
+		},
+		{
+			name:     "debug printf",
+			input:    "printf \"Debug: %s\\n\" \"$var\"",
+			expected: true,
+		},
+		{
+			name:     "regular echo",
+			input:    "echo 'Hello world'",
+			expected: false,
+		},
+		{
+			name:     "regular command",
+			input:    "ls -l",
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			if node == nil {
+				t.Fatal("Failed to get root node")
+			}
+			var printNode func(*sitter.Node, int)
+			printNode = func(n *sitter.Node, depth int) {
+				if n == nil {
+					return
+				}
+				indent := strings.Repeat("  ", depth)
+				content := ""
+				if n.StartByte() < uint32(len(tt.input)) && n.EndByte() <= uint32(len(tt.input)) {
+					content = string([]byte(tt.input)[n.StartByte():n.EndByte()])
+				}
+				t.Logf("%sNode type: %s, Content: %q", indent, n.Type(), content)
+				for i := 0; i < int(n.ChildCount()); i++ {
+					printNode(n.Child(i), depth+1)
+				}
+			}
+			printNode(node, 0)
+			var cmdNode *sitter.Node
+			var findCommand func(*sitter.Node)
+			findCommand = func(n *sitter.Node) {
+				if n.Type() == "command" || n.Type() == "redirected_statement" {
+					cmdNode = n
+					return
+				}
+				for i := 0; i < int(n.NamedChildCount()); i++ {
+					findCommand(n.NamedChild(i))
+				}
+			}
+			findCommand(node)
+			if cmdNode == nil {
+				t.Fatal("No command node found")
+			}
+			result := handler.IsLoggingCall(cmdNode, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsLoggingCall() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+}
+func TestBashGetterSetter(t *testing.T) {
+	handler := &BashHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(bash.GetLanguage())
+	input := `function get_value() { echo "$value"; }`
+	tree := parser.Parse(nil, []byte(input))
+	defer tree.Close()
+	node := tree.RootNode()
+	if handler.IsGetterSetter(node, []byte(input)) {
+		t.Error("Expected IsGetterSetter to always return false for Bash")
+	}
+}
+</document_content>
+</document>
+<document index="9">
+<source>filefusion/internal/core/cleaner/handlers/csharp_handler.go</source>
+<document_content>package handlers
+import (
+	"bytes"
+	"fmt"
+	"strings"
+	sitter "github.com/smacker/go-tree-sitter"
+)
+type CSharpHandler struct {
+	BaseHandler
+}
+func (h *CSharpHandler) GetCommentTypes() []string {
+	return []string{"comment", "multiline_comment"}
+}
+func (h *CSharpHandler) GetImportTypes() []string {
+	return []string{"using_directive"}
+}
+func (h *CSharpHandler) GetDocCommentPrefix() string {
+	return "///"
+}
+func (h *CSharpHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
+	if node == nil {
+		return false
+	}
+	if node.Type() != "invocation_expression" {
+		return false
+	}
+	memberAccess := node.Child(0)
+	if memberAccess == nil {
+		return false
+	}
+	if memberAccess.Type() != "member_access_expression" {
+		return false
+	}
+	callText := content[memberAccess.StartByte():memberAccess.EndByte()]
+	return bytes.Contains(callText, []byte("Console.")) ||
+		bytes.Contains(callText, []byte("Debug.")) ||
+		bytes.Contains(callText, []byte("Logger.")) ||
+		bytes.Contains(callText, []byte("Trace."))
+}
+func (h *CSharpHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
+	if node == nil {
+		return false
+	}
+	switch node.Type() {
+	case "property_declaration":
+		accessorList := node.ChildByFieldName("accessors")
+		if accessorList != nil {
+			hasGetter := false
+			hasSetter := false
+			for i := 0; i < int(accessorList.ChildCount()); i++ {
+				accessor := accessorList.Child(i)
+				if accessor.Type() != "accessor_declaration" {
+					continue
+				}
+				text := string(content[accessor.StartByte():accessor.EndByte()])
+				if strings.Contains(text, "get") {
+					hasGetter = true
+				}
+				if strings.Contains(text, "set") {
+					hasSetter = true
+				}
+			}
+			return hasGetter || hasSetter
+		}
+		return false
+	case "method_declaration":
+		nameNode := node.ChildByFieldName("name")
+		bodyNode := node.ChildByFieldName("body")
+		if nameNode != nil && bodyNode != nil {
+			name := string(content[nameNode.StartByte():nameNode.EndByte()])
+			bodyText := string(content[bodyNode.StartByte():bodyNode.EndByte()])
+			if strings.HasPrefix(name, "Get") && strings.Contains(bodyText, "return") {
+				return true
+			}
+			if strings.HasPrefix(name, "Set") && strings.Contains(bodyText, "=") {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+func hasAccessor(block *sitter.Node, content []byte) bool {
+	hasGetter := false
+	hasSetter := false
+	for i := 0; i < int(block.ChildCount()); i++ {
+		child := block.Child(i)
+		if child.Type() == "ERROR" {
+			text := string(content[child.StartByte():child.EndByte()])
+			if text == "get" {
+				hasGetter = true
+			} else if text == "set" {
+				hasSetter = true
+			}
+		}
+	}
+	return hasGetter || hasSetter
+}
+func findNextSibling(node *sitter.Node, nodeType string) *sitter.Node {
+	if node == nil || node.Parent() == nil {
+		return nil
+	}
+	parent := node.Parent()
+	for i := 0; i < int(parent.ChildCount()); i++ {
+		child := parent.Child(i)
+		if child == node {
+			for j := i + 1; j < int(parent.ChildCount()); j++ {
+				sibling := parent.Child(j)
+				if sibling.Type() == nodeType {
+					return sibling
+				}
+			}
+			break
+		}
+	}
+	return nil
+}
+</document_content>
+</document>
+<document index="10">
+<source>filefusion/internal/core/cleaner/handlers/html_handler.go</source>
+<document_content>package handlers
+import (
+	sitter "github.com/smacker/go-tree-sitter"
+)
+type HTMLHandler struct {
+	BaseHandler
+}
+func (h *HTMLHandler) GetCommentTypes() []string {
+	return []string{"comment"}
+}
+func (h *HTMLHandler) GetImportTypes() []string {
+	return []string{"link_element", "script_element"}
+}
+func (h *HTMLHandler) GetDocCommentPrefix() string {
+	return "<!--"
+}
+func (h *HTMLHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
+	return false
+}
+func (h *HTMLHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
+	return false
+}
+</document_content>
+</document>
+<document index="11">
+<source>filefusion/internal/core/cleaner/cleaner.go</source>
+<document_content>package cleaner
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"strings"
+	"github.com/drgsn/filefusion/internal/core/cleaner/handlers"
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/bash"
+	"github.com/smacker/go-tree-sitter/cpp"
+	"github.com/smacker/go-tree-sitter/csharp"
+	"github.com/smacker/go-tree-sitter/css"
+	"github.com/smacker/go-tree-sitter/golang"
+	"github.com/smacker/go-tree-sitter/html"
+	"github.com/smacker/go-tree-sitter/java"
+	"github.com/smacker/go-tree-sitter/javascript"
+	"github.com/smacker/go-tree-sitter/kotlin"
+	"github.com/smacker/go-tree-sitter/php"
+	"github.com/smacker/go-tree-sitter/python"
+	"github.com/smacker/go-tree-sitter/ruby"
+	"github.com/smacker/go-tree-sitter/sql"
+	"github.com/smacker/go-tree-sitter/swift"
+	"github.com/smacker/go-tree-sitter/typescript/typescript"
+)
+type Cleaner struct {
+	options  *CleanerOptions
+	language Language
+	handler  handlers.LanguageHandler
+}
+func NewCleaner(lang Language, options *CleanerOptions) (*Cleaner, error) {
+	if options == nil {
+		return nil, fmt.Errorf("cleaner options cannot be nil")
+	}
+	_, handler, err := getLanguageAndHandler(lang)
+	if err != nil {
+		return nil, err
+	}
+	return &Cleaner{
+		options:  options,
+		language: lang,
+		handler:  handler,
+	}, nil
+}
+func (c *Cleaner) Clean(input []byte) ([]byte, error) {
+	if len(input) == 0 {
+		return nil, fmt.Errorf("empty input")
+	}
+	parser := sitter.NewParser()
+	language, _, err := getLanguageAndHandler(c.language)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get language handler: %w", err)
+	}
+	parser.SetLanguage(language)
+	tree := parser.Parse(nil, input)
+	if tree == nil {
+		return nil, fmt.Errorf("parsing error: failed to create syntax tree")
+	}
+	defer tree.Close()
+	root := tree.RootNode()
+	if root == nil {
+		return nil, fmt.Errorf("parsing error: empty syntax tree")
+	}
+	if root.HasError() {
+		return nil, fmt.Errorf("parsing error: invalid syntax")
+	}
+	output := make([]byte, len(input))
+	copy(output, input)
+	if err := c.processNode(root, &output); err != nil {
+		return nil, fmt.Errorf("processing error: %w", err)
+	}
+	if c.options.OptimizeWhitespace {
+		output = c.optimizeWhitespace(output)
+	}
+	return output, nil
+}
+func (c *Cleaner) processNode(node *sitter.Node, content *[]byte) error {
+	if !c.shouldProcessNode(node, content) {
+		return nil
+	}
+	for i := int(node.NamedChildCount()) - 1; i >= 0; i-- {
+		child := node.NamedChild(i)
+		if err := c.processNode(child, content); err != nil {
+			return err
+		}
+	}
+	shouldRemove := false
+	for _, commentType := range c.handler.GetCommentTypes() {
+		if node.Type() == commentType && c.shouldRemoveComment(node, *content) {
+			shouldRemove = true
+			break
+		}
+	}
+	if c.options.RemoveLogging && c.handler.IsLoggingCall(node, *content) {
+		shouldRemove = true
+	}
+	if c.options.RemoveGettersSetters && c.handler.IsGetterSetter(node, *content) {
+		shouldRemove = true
+	}
+	if shouldRemove {
+		*content = c.removeNode(node, *content)
+	}
+	return nil
+}
+func (c *Cleaner) shouldProcessNode(node *sitter.Node, content *[]byte) bool {
+	if node == nil || len(*content) == 0 {
+		return false
+	}
+	if node.StartByte() >= uint32(len(*content)) || node.EndByte() > uint32(len(*content)) {
+		return false
+	}
+	return true
+}
+func (c *Cleaner) shouldRemoveComment(node *sitter.Node, content []byte) bool {
+	if !c.options.RemoveComments {
+		return false
+	}
+	if c.options.PreserveDocComments {
+		commentText := content[node.StartByte():node.EndByte()]
+		docPrefix := c.handler.GetDocCommentPrefix()
+		if bytes.HasPrefix(bytes.TrimSpace(commentText), []byte(docPrefix)) {
+			return false
+		}
+		if bytes.HasPrefix(bytes.TrimSpace(commentText), []byte("// ")) {
+			text := string(bytes.TrimSpace(commentText))
+			if strings.HasPrefix(text, "// Doc ") {
+				return false
+			}
+		}
+	}
+	return true
+}
+func (c *Cleaner) removeNode(node *sitter.Node, content []byte) []byte {
+	start := node.StartByte()
+	end := node.EndByte()
+	lineStart := int(start)
+	for lineStart > 0 && content[lineStart-1] != '\n' {
+		lineStart--
+	}
+	lineEnd := int(end)
+	for lineEnd < len(content) && content[lineEnd] != '\n' {
+		lineEnd++
+	}
+	line := bytes.TrimSpace(content[lineStart:lineEnd])
+	nodeContent := bytes.TrimSpace(content[start:end])
+	if bytes.Equal(line, nodeContent) {
+		return append(content[:lineStart], content[lineEnd:]...)
+	}
+	return append(content[:start], content[end:]...)
+}
+func (c *Cleaner) optimizeWhitespace(content []byte) []byte {
+	if !c.options.OptimizeWhitespace {
+		return content
+	}
+	lines := bytes.Split(content, []byte("\n"))
+	var result [][]byte
+	var previousLineEmpty bool
+	for i := range lines {
+		line := bytes.TrimRight(lines[i], " \t")
+		isEmpty := len(bytes.TrimSpace(line)) == 0
+		if !isEmpty || (!c.options.RemoveEmptyLines && !previousLineEmpty) {
+			result = append(result, line)
+		}
+		previousLineEmpty = isEmpty
+	}
+	return append(bytes.Join(result, []byte("\n")), '\n')
+}
+func (c *Cleaner) CleanFile(r io.Reader, w io.Writer) error {
+	input, err := io.ReadAll(r)
+	if err != nil {
+		return fmt.Errorf("reading error: %w", err)
+	}
+	cleaned, err := c.Clean(input)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(cleaned)
+	return err
+}
+</document_content>
+</document>
+<document index="12">
+<source>filefusion/internal/core/cleaner/handlers/java_handler.go</source>
+<document_content>package handlers
+import (
+	"bytes"
+	"strings"
+	sitter "github.com/smacker/go-tree-sitter"
+)
+type JavaHandler struct {
+	BaseHandler
+}
+func (h *JavaHandler) GetCommentTypes() []string {
+	return []string{"line_comment", "block_comment", "javadoc_comment"}
+}
+func (h *JavaHandler) GetImportTypes() []string {
+	return []string{"import_declaration"}
+}
+func (h *JavaHandler) GetDocCommentPrefix() string {
+	return "/**"
+}
+func (h *JavaHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
+	nodeType := node.Type()
+	if nodeType != "method_invocation" {
+		return false
+	}
+	callText := content[node.StartByte():node.EndByte()]
+	loggingPatterns := []string{
+		"Logger",
+		"System.out",
+		"System.err",
+		"log.",
+		"logger.",
+	}
+	for _, pattern := range loggingPatterns {
+		if bytes.Contains(callText, []byte(pattern)) {
+			return true
+		}
+	}
+	return false
+}
+func (h *JavaHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
+	if node.Type() != "method_declaration" {
+		return false
+	}
+	methodText := string(content[node.StartByte():node.EndByte()])
+	nameNode := node.ChildByFieldName("name")
+	if nameNode == nil {
+		return false
+	}
+	name := string(content[nameNode.StartByte():nameNode.EndByte()])
+	nameLower := strings.ToLower(name)
+	isGetter := (strings.HasPrefix(nameLower, "get") || strings.HasPrefix(nameLower, "is")) &&
+		strings.Contains(methodText, "return")
+	isSetter := strings.HasPrefix(nameLower, "set") &&
+		strings.Contains(methodText, "void")
+	return isGetter || isSetter
+}
+</document_content>
+</document>
+<document index="13">
+<source>filefusion/internal/core/cleaner/handlers/cpp_handler_test.go</source>
+<document_content>package handlers
+import (
+	"testing"
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/cpp"
+)
+func TestCPPHandlerBasics(t *testing.T) {
+	handler := &CPPHandler{}
+	commentTypes := handler.GetCommentTypes()
+	expected := []string{"comment", "multiline_comment"}
+	if !stringSliceEqual(commentTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, commentTypes)
+	}
+	importTypes := handler.GetImportTypes()
+	expected = []string{"preproc_include", "using_declaration"}
+	if !stringSliceEqual(importTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, importTypes)
+	}
+	if prefix := handler.GetDocCommentPrefix(); prefix != "///" {
+		t.Errorf("Expected '///', got %s", prefix)
+	}
+}
+func TestCPPLoggingCalls(t *testing.T) {
+	handler := &CPPHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(cpp.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "cout logging",
+			input:    "cout << \"Log message\" << endl;",
+			expected: true,
+		},
+		{
+			name:     "cerr logging",
+			input:    "cerr << \"Error message\" << endl;",
+			expected: true,
+		},
+		{
+			name:     "clog logging",
+			input:    "clog << \"Debug info\" << endl;",
+			expected: true,
+		},
+		{
+			name:     "printf logging",
+			input:    "printf(\"Debug: %s\\n\", message);",
+			expected: true,
+		},
+		{
+			name:     "fprintf logging",
+			input:    "fprintf(stderr, \"Error: %s\\n\", error);",
+			expected: true,
+		},
+		{
+			name:     "custom log call",
+			input:    "log(\"Message\");",
+			expected: true,
+		},
+		{
+			name:     "regular function call",
+			input:    "process(\"data\");",
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			var callNode *sitter.Node
+			cursor := sitter.NewTreeCursor(node)
+			defer cursor.Close()
+			var findCall func(*sitter.Node)
+			findCall = func(n *sitter.Node) {
+				if n.Type() == "call_expression" || n.Type() == "binary_expression" {
+					callNode = n
+					return
+				}
+				for i := 0; i < int(n.NamedChildCount()); i++ {
+					findCall(n.NamedChild(i))
+				}
+			}
+			findCall(node)
+			if callNode == nil {
+				t.Fatal("No call/binary expression node found")
+			}
+			result := handler.IsLoggingCall(callNode, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsLoggingCall() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+}
+func TestCPPGetterSetter(t *testing.T) {
+	handler := &CPPHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(cpp.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name: "getter method",
+			input: `string getName() const {
+                return name;
+            }`,
+			expected: true,
+		},
+		{
+			name: "setter method",
+			input: `void setName(string value) {
+                name = value;
+            }`,
+			expected: true,
+		},
+		{
+			name: "is getter",
+			input: `bool isValid() const {
+                return valid;
+            }`,
+			expected: true,
+		},
+		{
+			name: "regular method",
+			input: `void process() {
+                doWork();
+            }`,
+			expected: false,
+		},
+		{
+			name: "complex getter",
+			input: `int getValue(int index) {
+                return values[index];
+            }`,
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			var funcNode *sitter.Node
+			cursor := sitter.NewTreeCursor(node)
+			defer cursor.Close()
+			var findFunc func(*sitter.Node)
+			findFunc = func(n *sitter.Node) {
+				if n.Type() == "function_definition" {
+					funcNode = n
+					return
+				}
+				for i := 0; i < int(n.NamedChildCount()); i++ {
+					findFunc(n.NamedChild(i))
+				}
+			}
+			findFunc(node)
+			if funcNode == nil {
+				t.Fatal("No function definition node found")
+			}
+			result := handler.IsGetterSetter(funcNode, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsGetterSetter() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+}
+</document_content>
+</document>
+<document index="14">
+<source>filefusion/internal/core/cleaner/handlers/javascript_handler.go</source>
+<document_content>package handlers
+import (
+	"bytes"
+	"strings"
+	sitter "github.com/smacker/go-tree-sitter"
+)
+type JavaScriptHandler struct {
+	BaseHandler
+}
+func (h *JavaScriptHandler) GetCommentTypes() []string {
+	return []string{"comment", "multiline_comment"}
+}
+func (h *JavaScriptHandler) GetImportTypes() []string {
+	return []string{"import_statement", "import_specifier"}
+}
+func (h *JavaScriptHandler) GetDocCommentPrefix() string {
+	return "/**"
+}
+func (h *JavaScriptHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
+	if node.Type() != "call_expression" {
+		return false
+	}
+	callText := content[node.StartByte():node.EndByte()]
+	return bytes.HasPrefix(callText, []byte("console.")) ||
+}
+func (h *JavaScriptHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
+	nodeType := node.Type()
+	if nodeType != "method_definition" &&
+		nodeType != "getter_declaration" &&
+		nodeType != "setter_declaration" {
+		return false
+	}
+	methodText := string(content[node.StartByte():node.EndByte()])
+	return strings.HasPrefix(methodText, "get ") ||
+		strings.HasPrefix(methodText, "set ") ||
+		nodeType == "getter_declaration" ||
+		nodeType == "setter_declaration"
+}
+</document_content>
+</document>
+<document index="15">
+<source>filefusion/internal/core/cleaner/handlers/javascript_handler_test.go</source>
+<document_content>package handlers
+import (
+	"testing"
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/javascript"
+)
+func TestJavaScriptHandlerBasics(t *testing.T) {
+	handler := &JavaScriptHandler{}
+	commentTypes := handler.GetCommentTypes()
+	expected := []string{"comment", "multiline_comment"}
+	if !stringSliceEqual(commentTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, commentTypes)
+	}
+	importTypes := handler.GetImportTypes()
+	expected = []string{"import_statement", "import_specifier"}
+	if !stringSliceEqual(importTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, importTypes)
+	}
+	if prefix := handler.GetDocCommentPrefix(); prefix != "/**" {
+		t.Errorf("Expected '/**', got %s", prefix)
+	}
+}
+func TestJavaScriptHandlerLoggingAndGetterSetter(t *testing.T) {
+	handler := &JavaScriptHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(javascript.GetLanguage())
+	tests := []struct {
+		name      string
+		input     string
+		isLogging bool
+		isGetter  bool
+	}{
+		{
+			name:      "console log",
+			input:     "console.log('test');",
+			isLogging: true,
+			isGetter:  false,
+		},
+		{
+			name:      "logger debug",
+			input:     "logger.debug('test');",
+			isLogging: true,
+			isGetter:  false,
+		},
+		{
+			name:      "getter method",
+			input:     "class Test { get name() { return this._name; } }",
+			isLogging: false,
+			isGetter:  true,
+		},
+		{
+			name:      "setter method",
+			input:     "class Test { set name(value) { this._name = value; } }",
+			isLogging: false,
+			isGetter:  true,
+		},
+		{
+			name:      "regular method",
+			input:     "function test() { return true; }",
+			isLogging: false,
+			isGetter:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			root := tree.RootNode()
+			if root == nil {
+				t.Fatal("Failed to get root node")
+			}
+			var checkNode func(*sitter.Node)
+			checkNode = func(n *sitter.Node) {
+				if n == nil {
+					return
+				}
+				nodeType := n.Type()
+				if nodeType == "call_expression" ||
+					nodeType == "method_definition" ||
+					nodeType == "getter_declaration" ||
+					nodeType == "setter_declaration" {
+					if got := handler.IsLoggingCall(n, []byte(tt.input)); got != tt.isLogging {
+						t.Errorf("IsLoggingCall() = %v, want %v for %s", got, tt.isLogging, nodeType)
+					}
+					if got := handler.IsGetterSetter(n, []byte(tt.input)); got != tt.isGetter {
+						t.Errorf("IsGetterSetter() = %v, want %v for %s", got, tt.isGetter, nodeType)
+					}
+				}
+				for i := 0; i < int(n.ChildCount()); i++ {
+					checkNode(n.Child(i))
+				}
+			}
+			checkNode(root)
+		})
+	}
+}
+</document_content>
+</document>
+<document index="16">
+<source>filefusion/internal/core/cleaner/handlers/php_handler.go</source>
+<document_content>package handlers
+import (
+	"strings"
+	sitter "github.com/smacker/go-tree-sitter"
+)
+type PHPHandler struct {
+	BaseHandler
+}
+func (h *PHPHandler) GetCommentTypes() []string {
+	return []string{"comment", "doc_comment"}
+}
+func (h *PHPHandler) GetImportTypes() []string {
+	return []string{"namespace_use_declaration", "require", "require_once", "include", "include_once"}
+}
+func (h *PHPHandler) GetDocCommentPrefix() string {
+	return "/**"
+}
+func findNodeOfType(node *sitter.Node, nodeType string) *sitter.Node {
+	if node == nil {
+		return nil
+	}
+	if node.Type() == nodeType {
+		return node
+	}
+	for i := 0; i < int(node.NamedChildCount()); i++ {
+		if found := findNodeOfType(node.NamedChild(i), nodeType); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+func (h *PHPHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
+	if node == nil {
+		return false
+	}
+	var funcName string
+	nodeType := node.Type()
+	if nodeType == "function_call_expression" {
+		nameNode := node.ChildByFieldName("function")
+		if nameNode != nil && nameNode.StartByte() < uint32(len(content)) && nameNode.EndByte() <= uint32(len(content)) {
+			funcName = string(content[nameNode.StartByte():nameNode.EndByte()])
+		}
+	} else if nodeType == "echo_statement" {
+		return false
+	}
+	if funcName == "" {
+		return false
+	}
+	return funcName == "error_log" ||
+		funcName == "print_r" ||
+		funcName == "var_dump"
+}
+func (h *PHPHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
+	if node == nil {
+		return false
+	}
+	methodNode := findNodeOfType(node, "method_declaration")
+	if methodNode == nil {
+		return false
+	}
+	if methodNode.StartByte() >= uint32(len(content)) || methodNode.EndByte() > uint32(len(content)) {
+		return false
+	}
+	methodText := string(content[methodNode.StartByte():methodNode.EndByte()])
+	return strings.Contains(methodText, "public function get") ||
+		strings.Contains(methodText, "public function set")
+}
+</document_content>
+</document>
+<document index="17">
+<source>filefusion/internal/core/cleaner/handlers/java_handler_test.go</source>
+<document_content>package handlers
+import (
+	"testing"
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/java"
+)
+func TestJavaHandlerBasics(t *testing.T) {
+	handler := &JavaHandler{}
+	commentTypes := handler.GetCommentTypes()
+	expected := []string{"line_comment", "block_comment", "javadoc_comment"}
+	if !stringSliceEqual(commentTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, commentTypes)
+	}
+	importTypes := handler.GetImportTypes()
+	expected = []string{"import_declaration"}
+	if !stringSliceEqual(importTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, importTypes)
+	}
+	if prefix := handler.GetDocCommentPrefix(); prefix != "/**" {
+		t.Errorf("Expected '/**', got %s", prefix)
+	}
+}
+func TestJavaHandlerLoggingAndGetterSetter(t *testing.T) {
+	handler := &JavaHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(java.GetLanguage())
+	tests := []struct {
+		name      string
+		input     string
+		isLogging bool
+		isGetter  bool
+	}{
+		{
+			name:      "logger field",
+			input:     "class Test { void test() { logger.info(\"test\"); } }",
+			isLogging: true,
+			isGetter:  false,
+		},
+		{
+			name:      "system out",
+			input:     "class Test { void test() { System.out.println(\"test\"); } }",
+			isLogging: true,
+			isGetter:  false,
+		},
+		{
+			name:      "system err",
+			input:     "class Test { void test() { System.err.println(\"error\"); } }",
+			isLogging: true,
+			isGetter:  false,
+		},
+		{
+			name:      "log call",
+			input:     "class Test { void test() { log.debug(\"debug\"); } }",
+			isLogging: true,
+			isGetter:  false,
+		},
+		{
+			name:      "Logger static call",
+			input:     "class Test { void test() { Logger.getLogger(Test.class).info(\"test\"); } }",
+			isLogging: true,
+			isGetter:  false,
+		},
+		{
+			name:      "regular method call",
+			input:     "class Test { void test() { process(\"data\"); } }",
+			isLogging: false,
+			isGetter:  false,
+		},
+		{
+			name:      "getter method",
+			input:     "class Test { public String getName() { return name; } }",
+			isLogging: false,
+			isGetter:  true,
+		},
+		{
+			name:      "setter method",
+			input:     "class Test { public void setName(String name) { this.name = name; } }",
+			isLogging: false,
+			isGetter:  true,
+		},
+		{
+			name:      "boolean getter with is prefix",
+			input:     "class Test { public boolean isValid() { return valid; } }",
+			isLogging: false,
+			isGetter:  true,
+		},
+		{
+			name:      "getter with javadoc",
+			input:     "class Test { /** Gets the name */ public String getName() { return name; } }",
+			isLogging: false,
+			isGetter:  true,
+		},
+		{
+			name:      "regular method",
+			input:     "class Test { public void process() { doWork(); } }",
+			isLogging: false,
+			isGetter:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			var cursor = sitter.NewTreeCursor(tree.RootNode())
+			defer cursor.Close()
+			var processNode func(*sitter.Node)
+			processNode = func(node *sitter.Node) {
+				if node == nil {
+					return
+				}
+				nodeType := node.Type()
+				if nodeType == "method_invocation" {
+					if got := handler.IsLoggingCall(node, []byte(tt.input)); got != tt.isLogging {
+						t.Errorf("IsLoggingCall() = %v, want %v for %s", got, tt.isLogging, nodeType)
+					}
+				} else if nodeType == "method_declaration" {
+					if got := handler.IsGetterSetter(node, []byte(tt.input)); got != tt.isGetter {
+						t.Errorf("IsGetterSetter() = %v, want %v for %s", got, tt.isGetter, nodeType)
+					}
+				}
+				for i := 0; i < int(node.NamedChildCount()); i++ {
+					child := node.NamedChild(i)
+					processNode(child)
+				}
+			}
+			processNode(tree.RootNode())
+		})
+	}
+}
+</document_content>
+</document>
+<document index="18">
+<source>filefusion/internal/core/cleaner/handlers/html_handler_test.go</source>
+<document_content>package handlers
+import (
+	"testing"
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/html"
+)
+func TestHTMLHandlerBasics(t *testing.T) {
+	handler := &HTMLHandler{}
+	commentTypes := handler.GetCommentTypes()
+	expected := []string{"comment"}
+	if !stringSliceEqual(commentTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, commentTypes)
+	}
+	importTypes := handler.GetImportTypes()
+	expected = []string{"link_element", "script_element"}
+	if !stringSliceEqual(importTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, importTypes)
+	}
+	if prefix := handler.GetDocCommentPrefix(); prefix != "<!--" {
+		t.Errorf("Expected '<!--', got %s", prefix)
+	}
+}
+func TestHTMLLoggingCalls(t *testing.T) {
+	handler := &HTMLHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(html.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "regular element",
+			input:    "<div>Test</div>",
+			expected: false,
+		},
+		{
+			name:     "script tag with console.log",
+			input:    "<script>console.log('test');</script>",
+			expected: false,
+		},
+		{
+			name:     "empty element",
+			input:    "<br/>",
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			result := handler.IsLoggingCall(node, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsLoggingCall() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+	if handler.IsLoggingCall(nil, []byte("")) {
+		t.Error("Expected IsLoggingCall to return false for nil node")
+	}
+	tree := parser.Parse(nil, []byte(""))
+	if tree == nil {
+		t.Fatal("Failed to parse empty input")
+	}
+	defer tree.Close()
+	if handler.IsLoggingCall(tree.RootNode(), []byte("")) {
+		t.Error("Expected IsLoggingCall to return false for empty content")
+	}
+}
+func TestHTMLGetterSetter(t *testing.T) {
+	handler := &HTMLHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(html.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "regular element",
+			input:    "<div>Test</div>",
+			expected: false,
+		},
+		{
+			name:     "input element",
+			input:    "<input type=\"text\" value=\"test\">",
+			expected: false,
+		},
+		{
+			name:     "script tag with getter",
+			input:    "<script>get value() { return this._value; }</script>",
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			result := handler.IsGetterSetter(node, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsGetterSetter() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+	if handler.IsGetterSetter(nil, []byte("")) {
+		t.Error("Expected IsGetterSetter to return false for nil node")
+	}
+	tree := parser.Parse(nil, []byte(""))
+	if tree == nil {
+		t.Fatal("Failed to parse empty input")
+	}
+	defer tree.Close()
+	if handler.IsGetterSetter(tree.RootNode(), []byte("")) {
+		t.Error("Expected IsGetterSetter to return false for empty content")
+	}
+}
+</document_content>
+</document>
+<document index="19">
+<source>filefusion/internal/core/cleaner/handlers/csharp_handler_test.go</source>
+<document_content>package handlers
+import (
+	"testing"
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/csharp"
+)
+func findFirstNodeOfType(root *sitter.Node, nodeType string) *sitter.Node {
+	if root == nil {
+		return nil
+	}
+	cursor := sitter.NewTreeCursor(root)
+	defer cursor.Close()
+	ok := cursor.GoToFirstChild()
+	for ok {
+		if cursor.CurrentNode().Type() == nodeType {
+			return cursor.CurrentNode()
+		}
+		if node := findFirstNodeOfType(cursor.CurrentNode(), nodeType); node != nil {
+			return node
+		}
+		ok = cursor.GoToNextSibling()
+	}
+	return nil
+}
+func TestCSharpHandlerBasics(t *testing.T) {
+	handler := &CSharpHandler{}
+	commentTypes := handler.GetCommentTypes()
+	expected := []string{"comment", "multiline_comment"}
+	if !stringSliceEqual(commentTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, commentTypes)
+	}
+	importTypes := handler.GetImportTypes()
+	expected = []string{"using_directive"}
+	if !stringSliceEqual(importTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, importTypes)
+	}
+	if prefix := handler.GetDocCommentPrefix(); prefix != "///" {
+		t.Errorf("Expected '///', got %s", prefix)
+	}
+}
+func TestCSharpLoggingCalls(t *testing.T) {
+	handler := &CSharpHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(csharp.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "console write",
+			input:    "Console.WriteLine(\"test\");",
+			expected: true,
+		},
+		{
+			name:     "debug log",
+			input:    "Debug.Log(\"test\");",
+			expected: true,
+		},
+		{
+			name:     "logger info",
+			input:    "Logger.Info(\"test\");",
+			expected: true,
+		},
+		{
+			name:     "trace write",
+			input:    "Trace.WriteLine(\"test\");",
+			expected: true,
+		},
+		{
+			name:     "regular method call",
+			input:    "Process(\"test\");",
+			expected: false,
+		},
+		{
+			name:     "string method",
+			input:    "\"test\".ToString();",
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			invocationNode := findFirstNodeOfType(tree.RootNode(), "invocation_expression")
+			if invocationNode == nil {
+				t.Fatal("Failed to find invocation_expression node")
+			}
+			result := handler.IsLoggingCall(invocationNode, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsLoggingCall() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+	if handler.IsLoggingCall(nil, []byte("")) {
+		t.Error("Expected IsLoggingCall to return false for nil node")
+	}
+}
+func TestCSharpGetterSetter(t *testing.T) {
+	handler := &CSharpHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(csharp.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{"auto_property", "public string Name { get; set; }", true},
+		{"getter_only_property", "public string Name { get; }", true},
+		{"setter_only_property", "public string Name { private set; }", true},
+		{"property_with_access_modifiers", "public string Name { private set; get; }", true},
+		{"getter_method", "public string GetName() { return name; }", true},
+		{"setter_method", "public void SetName(string value) { name = value; }", true},
+		{"regular_method", "public void Process() { }", false},
+		{"regular_property", "public string Name;", false},
+		{"invalid_property_syntax", "public string Name { get set; }", false},
+		{"empty_accessor_blocks", "public string Name { get; }", true},
+		{"invalid_accessor_body", "public string Name { get {} set; }", true},
+		{"missing_getter", "public string Name { set; }", true},
+		{"missing_setter", "public string Name { get; }", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			rootNode := tree.RootNode()
+			if rootNode == nil {
+				t.Fatal("Failed to get root node")
+			}
+			node := findRelevantNode(rootNode, []byte(tt.input), []string{"property_declaration", "method_declaration"})
+			if node == nil || node.Type() == "ERROR" {
+				t.Skip("Skipping unsupported syntax")
+			}
+			result := handler.IsGetterSetter(node, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsGetterSetter() = %v for input %q, got %v", tt.expected, tt.input, result)
+			}
+		})
+	}
+}
+func findRelevantNode(node *sitter.Node, content []byte, types []string) *sitter.Node {
+	if node == nil {
+		return nil
+	}
+	for _, nodeType := range types {
+		if node.Type() == nodeType || node.Type() == "ERROR" {
+			return node
+		}
+	}
+	for i := 0; i < int(node.ChildCount()); i++ {
+		child := node.Child(i)
+		if found := findRelevantNode(child, content, types); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+</document_content>
+</document>
+<document index="20">
+<source>filefusion/cmd/filefusion/main.go</source>
+<document_content>package main
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"github.com/drgsn/filefusion/internal/core"
+	"github.com/drgsn/filefusion/internal/core/cleaner"
+	"github.com/spf13/cobra"
+)
+var (
+	outputPath     string
+	pattern        string
+	exclude        string
+	maxFileSize    string
+	maxOutputSize  string
+	dryRun         bool
+	ignoreSymlinks bool
+	cleanEnabled         bool
+	removeComments       bool
+	preserveDocComments  bool
+	removeImports        bool
+	removeLogging        bool
+	removeGettersSetters bool
+	optimizeWhitespace   bool
+	removeEmptyLines     bool
+)
+var rootCmd = &cobra.Command{
+	Use:   "filefusion [paths...]",
+	Short: "Filefusion - File concatenation tool optimized for LLM usage",
+	Long: `Filefusion concatenates files into a format optimized for Large Language Models (LLMs).
+It preserves file metadata and structures the output in an XML-like or JSON format.
+Complete documentation is available at https://github.com/drgsn/filefusion`,
+	RunE: runMix,
+}
+func init() {
+	initCoreFlags()
+	initCleanerFlags()
+}
+func initCoreFlags() {
+	rootCmd.PersistentFlags().StringVarP(&outputPath, "output", "o", "", "output file path")
+	rootCmd.PersistentFlags().StringVarP(&pattern, "pattern", "p", "*.go,*.json,*.yaml,*.yml", "file patterns")
+	rootCmd.PersistentFlags().StringVarP(&exclude, "exclude", "e", "", "exclude patterns")
+	rootCmd.PersistentFlags().StringVar(&maxFileSize, "max-file-size", "10MB", "maximum size for individual input files")
+	rootCmd.PersistentFlags().StringVar(&maxOutputSize, "max-output-size", "50MB", "maximum size for output file")
+	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Show the list of files that will be processed")
+	rootCmd.PersistentFlags().BoolVar(&ignoreSymlinks, "ignore-symlinks", false, "Ignore symbolic links when processing files")
+}
+func initCleanerFlags() {
+	rootCmd.PersistentFlags().BoolVar(&cleanEnabled, "clean", false, "enable code cleaning")
+	rootCmd.PersistentFlags().BoolVar(&removeComments, "clean-remove-comments", true, "remove comments during cleaning")
+	rootCmd.PersistentFlags().BoolVar(&preserveDocComments, "clean-preserve-doc-comments", true, "preserve documentation comments")
+	rootCmd.PersistentFlags().BoolVar(&removeImports, "clean-remove-imports", false, "remove import statements")
+	rootCmd.PersistentFlags().BoolVar(&removeLogging, "clean-remove-logging", true, "remove logging statements")
+	rootCmd.PersistentFlags().BoolVar(&removeGettersSetters, "clean-remove-getters-setters", true, "remove getter/setter methods")
+	rootCmd.PersistentFlags().BoolVar(&optimizeWhitespace, "clean-optimize-whitespace", true, "optimize whitespace")
+	rootCmd.PersistentFlags().BoolVar(&removeEmptyLines, "clean-remove-empty-lines", true, "remove empty lines")
+}
+func main() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+func runMix(cmd *cobra.Command, args []string) error {
+	config, err := validateAndGetConfig(args)
+	if err != nil {
+		return err
+	}
+	if len(args) == 0 {
+		currentDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("error getting current working directory: %w", err)
+		}
+		args = []string{currentDir}
+	}
+	fileManager := core.NewFileManager(config.MaxFileSize, config.MaxOutputSize, config.OutputType)
+	finder := core.NewFileFinder(config.IncludePatterns, config.ExcludePatterns, !ignoreSymlinks)
+	files, err := finder.FindMatchingFiles(args)
+	if err != nil {
+		return fmt.Errorf("error finding files: %w", err)
+	}
+	validFiles, err := fileManager.ValidateFiles(files)
+	if err != nil {
+		return err
+	}
+	if dryRun {
+		return nil
+	}
+	outputPaths, err := fileManager.DeriveOutputPaths(args, outputPath)
+	if err != nil {
+		return err
+	}
+	fileGroups, err := fileManager.GroupFilesByOutput(validFiles, outputPaths)
+	if err != nil {
+		return err
+	}
+	for _, group := range fileGroups {
+		processor := core.NewFileProcessor(&core.MixOptions{
+			MaxFileSize:    config.MaxFileSize,
+			MaxOutputSize:  config.MaxOutputSize,
+			OutputType:     config.OutputType,
+			CleanerOptions: config.CleanerOptions,
+		})
+		contents, err := processor.ProcessFiles(group.Files)
+		if err != nil {
+			return fmt.Errorf("error processing files for %s: %w", group.OutputPath, err)
+		}
+		generator, err := core.NewOutputGenerator(&core.MixOptions{
+			OutputPath:    group.OutputPath,
+			OutputType:    config.OutputType,
+			MaxOutputSize: config.MaxOutputSize,
+		})
+		if err != nil {
+			return fmt.Errorf("error creating output: %w", err)
+		}
+		if err := generator.Generate(contents); err != nil {
+			return fmt.Errorf("error generating output for %s: %w", group.OutputPath, err)
+		}
+	}
+	return nil
+}
+type Config struct {
+	IncludePatterns []string
+	ExcludePatterns []string
+	MaxFileSize     int64
+	MaxOutputSize   int64
+	OutputType      core.OutputType
+	CleanerOptions  *cleaner.CleanerOptions
+}
+func validateAndGetConfig(args []string) (*Config, error) {
+	if pattern == "" {
+		return nil, fmt.Errorf("pattern cannot be empty")
+	}
+	validator := core.NewPatternValidator()
+	includePatterns, err := validator.ExpandPattern(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid include pattern: %w", err)
+	}
+	var excludePatterns []string
+	if exclude != "" {
+		excludePatterns, err = validator.ExpandPattern(exclude)
+		if err != nil {
+			return nil, fmt.Errorf("invalid exclude pattern: %w", err)
+		}
+	}
+	fileManager := core.NewFileManager(0, 0, core.OutputTypeXML)
+	maxFileSizeBytes, err := fileManager.ParseSize(maxFileSize)
+	if err != nil {
+		return nil, fmt.Errorf("invalid max-file-size value: %w", err)
+	}
+	maxOutputSizeBytes, err := fileManager.ParseSize(maxOutputSize)
+	if err != nil {
+		return nil, fmt.Errorf("invalid max-output-size value: %w", err)
+	}
+	outputType, err := validateAndGetOutputType(outputPath)
+	if err != nil {
+		return nil, err
+	}
+	cleanerOpts := getCleanerOptions()
+	return &Config{
+		IncludePatterns: includePatterns,
+		ExcludePatterns: excludePatterns,
+		MaxFileSize:     maxFileSizeBytes,
+		MaxOutputSize:   maxOutputSizeBytes,
+		OutputType:      outputType,
+		CleanerOptions:  cleanerOpts,
+	}, nil
+}
+func validateAndGetOutputType(outputPath string) (core.OutputType, error) {
+	if outputPath == "" {
+		return core.OutputTypeXML, nil
+	}
+	ext := strings.ToLower(filepath.Ext(outputPath))
+	switch ext {
+	case ".json":
+		return core.OutputTypeJSON, nil
+	case ".yaml", ".yml":
+		return core.OutputTypeYAML, nil
+	case ".xml":
+		return core.OutputTypeXML, nil
+	default:
+		return "", fmt.Errorf("invalid output file extension: must be .xml, .json, .yaml, or .yml")
+	}
+}
+</document_content>
+</document>
+<document index="21">
+<source>filefusion/internal/core/cleaner/handlers/python_handler.go</source>
+<document_content>package handlers
+import (
+	"bytes"
+	"strings"
+	sitter "github.com/smacker/go-tree-sitter"
+)
+type PythonHandler struct {
+	BaseHandler
+}
+func (h *PythonHandler) GetCommentTypes() []string {
+	return []string{"comment"}
+}
+func (h *PythonHandler) GetImportTypes() []string {
+	return []string{"import_statement", "import_from_statement"}
+}
+func (h *PythonHandler) GetDocCommentPrefix() string {
+	return "\"\"\""
+}
+func (h *PythonHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
+	if node == nil || node.Type() != "call" {
+		return false
+	}
+	if node.StartByte() >= uint32(len(content)) || node.EndByte() > uint32(len(content)) {
+		return false
+	}
+	callText := content[node.StartByte():node.EndByte()]
+	return bytes.HasPrefix(callText, []byte("print(")) ||
+		bytes.HasPrefix(callText, []byte("logging.")) ||
+}
+func (h *PythonHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
+	if node == nil || node.Type() != "function_definition" {
+		return false
+	}
+	if node.StartByte() >= uint32(len(content)) || node.EndByte() > uint32(len(content)) {
+		return false
+	}
+	parent := node.Parent()
+	if parent != nil {
+		parentText := string(content[parent.StartByte():parent.EndByte()])
+		if strings.Contains(parentText, "@property") {
+			return true
+		}
+	}
+	nameNode := node.ChildByFieldName("name")
+	if nameNode == nil {
+		return false
+	}
+	name := string(content[nameNode.StartByte():nameNode.EndByte()])
+	return strings.HasPrefix(name, "get_") ||
+		strings.HasPrefix(name, "set_")
+}
+</document_content>
+</document>
+<document index="22">
+<source>filefusion/internal/core/cleaner/handlers/sql_handler.go</source>
+<document_content>package handlers
+import (
+    sitter "github.com/smacker/go-tree-sitter"
+)
+type SQLHandler struct {
+    BaseHandler
+}
+func (h *SQLHandler) GetCommentTypes() []string {
+    return []string{"comment", "block_comment"}
+}
+func (h *SQLHandler) GetImportTypes() []string {
+    return []string{"create_extension_statement", "use_statement"}
+}
+func (h *SQLHandler) GetDocCommentPrefix() string {
+    return "--"
+}
+func (h *SQLHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
+    return false
+}
+func (h *SQLHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
+    return false
+}
+</document_content>
+</document>
+<document index="23">
+<source>filefusion/internal/core/cleaner/handlers/ruby_handler.go</source>
+<document_content>package handlers
+import (
+	"bytes"
+	"strings"
+	sitter "github.com/smacker/go-tree-sitter"
+)
+type RubyHandler struct {
+	BaseHandler
+}
+func (h *RubyHandler) GetCommentTypes() []string {
+	return []string{"comment"}
+}
+func (h *RubyHandler) GetImportTypes() []string {
+	return []string{"require", "include", "require_relative"}
+}
+func (h *RubyHandler) GetDocCommentPrefix() string {
+	return "#"
+}
+func (h *RubyHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
+	if node == nil || len(content) == 0 {
+		return false
+	}
+	nodeType := node.Type()
+	if nodeType != "call" && nodeType != "method_call" && nodeType != "command" {
+		return false
+	}
+	callText := content[node.StartByte():node.EndByte()]
+	return bytes.HasPrefix(callText, []byte("puts ")) ||
+		bytes.HasPrefix(callText, []byte("print ")) ||
+		bytes.HasPrefix(callText, []byte("p ")) ||
+}
+func (h *RubyHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
+	if node == nil || len(content) == 0 {
+		return false
+	}
+	nodeType := node.Type()
+	if nodeType != "call" && nodeType != "method" && nodeType != "method_definition" {
+		return false
+	}
+	methodText := string(content[node.StartByte():node.EndByte()])
+	return strings.Contains(methodText, "attr_reader") ||
+		strings.Contains(methodText, "attr_writer") ||
+		strings.Contains(methodText, "attr_accessor") ||
+		strings.HasPrefix(methodText, "def get_") ||
+		strings.HasPrefix(methodText, "def set_")
+}
+</document_content>
+</document>
+<document index="24">
+<source>filefusion/internal/core/cleaner/handlers/go_handler_test.go</source>
+<document_content>package handlers
+import (
+	"testing"
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/golang"
+)
+func TestGoHandlerBasics(t *testing.T) {
+	handler := &GoHandler{}
+	commentTypes := handler.GetCommentTypes()
+	expected := []string{"comment"}
+	if !stringSliceEqual(commentTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, commentTypes)
+	}
+	importTypes := handler.GetImportTypes()
+	expected = []string{"import_declaration", "import_spec"}
+	if !stringSliceEqual(importTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, importTypes)
+	}
+	if prefix := handler.GetDocCommentPrefix(); prefix != "///" {
+		t.Errorf("Expected '///', got %s", prefix)
+	}
+}
+func TestGoHandlerLoggingAndGetterSetter(t *testing.T) {
+	handler := &GoHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(golang.GetLanguage())
+	tests := []struct {
+		name      string
+		input     string
+		isLogging bool
+		isGetter  bool
+	}{
+		{
+			name:      "log print",
+			input:     "package main\nfunc main() { log.Println(\"test\") }",
+			isLogging: true,
+			isGetter:  false,
+		},
+		{
+			name:      "logger debug",
+			input:     "package main\nfunc main() { logger.Debug(\"test\") }",
+			isLogging: true,
+			isGetter:  false,
+		},
+		{
+			name:      "getter method",
+			input:     "package main\nfunc GetName() string { return name }",
+			isLogging: false,
+			isGetter:  true,
+		},
+		{
+			name:      "setter method",
+			input:     "package main\nfunc SetName(name string) { this.name = name }",
+			isLogging: false,
+			isGetter:  true,
+		},
+		{
+			name:      "regular function",
+			input:     "package main\nfunc Process() error { return nil }",
+			isLogging: false,
+			isGetter:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			var processNode func(*sitter.Node)
+			processNode = func(node *sitter.Node) {
+				if node == nil {
+					return
+				}
+				nodeType := node.Type()
+				if nodeType == "call_expression" {
+					if got := handler.IsLoggingCall(node, []byte(tt.input)); got != tt.isLogging {
+						t.Errorf("IsLoggingCall() = %v, want %v for %s", got, tt.isLogging, nodeType)
+					}
+				} else if nodeType == "function_declaration" {
+					if got := handler.IsGetterSetter(node, []byte(tt.input)); got != tt.isGetter {
+						t.Errorf("IsGetterSetter() = %v, want %v for %s", got, tt.isGetter, nodeType)
+					}
+				}
+				for i := 0; i < int(node.NamedChildCount()); i++ {
+					processNode(node.NamedChild(i))
+				}
+			}
+			processNode(tree.RootNode())
+		})
+	}
+}
+</document_content>
+</document>
+<document index="25">
+<source>filefusion/internal/core/cleaner/handlers/typescript_handler.go</source>
+<document_content>package handlers
+type TypeScriptHandler struct {
+	JavaScriptHandler
+}
+func (h *TypeScriptHandler) GetImportTypes() []string {
+	baseTypes := h.JavaScriptHandler.GetImportTypes()
+	return append(baseTypes, "import_require_clause", "import_alias")
+}
+</document_content>
+</document>
+<document index="26">
+<source>filefusion/internal/core/cleaner/handlers/kotlin_handler.go</source>
+<document_content>package handlers
+import (
+	"bytes"
+	"strings"
+	sitter "github.com/smacker/go-tree-sitter"
+)
+type KotlinHandler struct {
+	BaseHandler
+}
+func (h *KotlinHandler) GetCommentTypes() []string {
+	return []string{"comment", "multiline_comment", "kdoc"}
+}
+func (h *KotlinHandler) GetImportTypes() []string {
+	return []string{"import_header"}
+}
+func (h *KotlinHandler) GetDocCommentPrefix() string {
+	return "/**"
+}
+func (h *KotlinHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
+	if node == nil || node.Type() != "call_expression" {
+		return false
+	}
+	if node.StartByte() >= uint32(len(content)) || node.EndByte() > uint32(len(content)) {
+		return false
+	}
+	callText := content[node.StartByte():node.EndByte()]
+	return bytes.Contains(bytes.ToLower(callText), []byte("println(")) ||
+		bytes.Contains(bytes.ToLower(callText), []byte("print(")) ||
+		bytes.Contains(callText, []byte("Logger.")) ||
+		 ||
+}
+func findFirstChild(node *sitter.Node, nodeType string) *sitter.Node {
+	if node == nil {
+		return nil
+	}
+	if node.Type() == nodeType {
+		return node
+	}
+	for i := 0; i < int(node.NamedChildCount()); i++ {
+		if found := findFirstChild(node.NamedChild(i), nodeType); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+func (h *KotlinHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
+	if node == nil {
+		return false
+	}
+	if node.Type() == "source_file" {
+		var propertyFound bool
+		for i := 0; i < int(node.NamedChildCount()); i++ {
+			child := node.NamedChild(i)
+			if child.Type() == "property_declaration" {
+				propertyFound = true
+				break
+			}
+		}
+		if propertyFound {
+			for i := 0; i < int(node.NamedChildCount()); i++ {
+				child := node.NamedChild(i)
+				if child.Type() == "getter" || child.Type() == "setter" {
+					return true
+				}
+			}
+		}
+		for i := 0; i < int(node.NamedChildCount()); i++ {
+			child := node.NamedChild(i)
+			if child.Type() == "function_declaration" {
+				for j := 0; j < int(child.NamedChildCount()); j++ {
+					nameNode := child.NamedChild(j)
+					if nameNode.Type() == "simple_identifier" {
+						name := string(content[nameNode.StartByte():nameNode.EndByte()])
+						if strings.HasPrefix(strings.ToLower(name), "get") || strings.HasPrefix(strings.ToLower(name), "set") {
+							return true
+						}
+						break
+					}
+				}
+			}
+		}
+		return false
+	}
+	switch node.Type() {
+	case "property_declaration":
+		if parent := node.Parent(); parent != nil {
+			for i := 0; i < int(parent.NamedChildCount()); i++ {
+				child := parent.NamedChild(i)
+				if child.Type() == "getter" || child.Type() == "setter" {
+					return true
+				}
+			}
+		}
+	case "getter", "setter":
+		return true
+	case "function_declaration":
+		for i := 0; i < int(node.NamedChildCount()); i++ {
+			nameNode := node.NamedChild(i)
+			if nameNode.Type() == "simple_identifier" {
+				name := string(content[nameNode.StartByte():nameNode.EndByte()])
+				if strings.HasPrefix(strings.ToLower(name), "get") || strings.HasPrefix(strings.ToLower(name), "set") {
+					return true
+				}
+				break
+			}
+		}
+	}
+	return false
+}
+</document_content>
+</document>
+<document index="27">
+<source>filefusion/internal/core/cleaner/options.go</source>
+<document_content>package cleaner
+type CleanerOptions struct {
+	RemoveComments bool
+	PreserveDocComments bool
+	RemoveImports bool
+	RemoveLogging bool
+	RemoveGettersSetters bool
+	OptimizeWhitespace bool
+	RemoveEmptyLines bool
+	LoggingPrefixes map[Language][]string
+}
+func DefaultOptions() *CleanerOptions {
+	return &CleanerOptions{
+		RemoveComments:       true,
+		PreserveDocComments:  true,
+		RemoveImports:        false,
+		RemoveLogging:        true,
+		RemoveGettersSetters: true,
+		OptimizeWhitespace:   true,
+		RemoveEmptyLines:     true,
+		LoggingPrefixes: map[Language][]string{
+			LangGo:         {"log.", "logger."},
+			LangJava:       {"Logger.", "System.out.", "System.err."},
+			LangPython:     {"logging.", "logger.", "print(", "print ("},
+			LangJavaScript: {"console.", "logger."},
+			LangTypeScript: {"console.", "logger."},
+			LangPHP:        {"error_log(", "print_r(", "var_dump("},
+			LangRuby:       {"puts ", "print ", "p ", "logger."},
+			LangCSharp:     {"Console.", "Debug.", "Logger."},
+			LangSwift:      {"print(", "debugPrint(", "NSLog("},
+			LangKotlin:     {"println(", "print(", "Logger."},
+		},
+	}
+}
+</document_content>
+</document>
+<document index="28">
+<source>filefusion/internal/core/cleaner/handlers/php_handler_test.go</source>
+<document_content>package handlers
+import (
+	"testing"
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/php"
+)
+func TestPHPHandlerBasics(t *testing.T) {
+	handler := &PHPHandler{}
+	commentTypes := handler.GetCommentTypes()
+	expected := []string{"comment", "doc_comment"}
+	if !stringSliceEqual(commentTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, commentTypes)
+	}
+	importTypes := handler.GetImportTypes()
+	expected = []string{"namespace_use_declaration", "require", "require_once", "include", "include_once"}
+	if !stringSliceEqual(importTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, importTypes)
+	}
+	if prefix := handler.GetDocCommentPrefix(); prefix != "/**" {
+		t.Errorf("Expected '/**', got %s", prefix)
+	}
+}
+func TestPHPLoggingCalls(t *testing.T) {
+	handler := &PHPHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(php.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "error_log call",
+			input:    "<?php error_log('Error message'); ?>",
+			expected: true,
+		},
+		{
+			name:     "print_r call",
+			input:    "<?php print_r($data); ?>",
+			expected: true,
+		},
+		{
+			name:     "var_dump call",
+			input:    "<?php var_dump($variable); ?>",
+			expected: true,
+		},
+		{
+			name:     "regular echo",
+			input:    "<?php echo 'Hello'; ?>",
+			expected: false,
+		},
+		{
+			name:     "regular function call",
+			input:    "<?php process($data); ?>",
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			var callNode *sitter.Node
+			var findCall func(*sitter.Node)
+			findCall = func(n *sitter.Node) {
+				if n == nil {
+					return
+				}
+				t.Logf("Node type: %s", n.Type())
+				nodeType := n.Type()
+				if nodeType == "function_call_expression" {
+					callNode = n
+					return
+				}
+				if nodeType == "echo_statement" {
+					callNode = n
+					return
+				}
+				for i := 0; i < int(n.ChildCount()); i++ {
+					findCall(n.Child(i))
+				}
+			}
+			findCall(node)
+			if callNode == nil {
+				t.Fatalf("No function call node found in input: %s\nAST structure: %s", tt.input, node.String())
+			}
+			result := handler.IsLoggingCall(callNode, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsLoggingCall() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+}
+func TestPHPGetterSetter(t *testing.T) {
+	handler := &PHPHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(php.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name: "getter method",
+			input: `<?php
+                class Test {
+                    public function getName() {
+                        return $this->name;
+                    }
+                }
+            ?>`,
+			expected: true,
+		},
+		{
+			name: "setter method",
+			input: `<?php
+                class Test {
+                    public function setName($value) {
+                        $this->name = $value;
+                    }
+                }
+            ?>`,
+			expected: true,
+		},
+		{
+			name: "regular method",
+			input: `<?php
+                class Test {
+                    public function process() {
+                        return $this->doWork();
+                    }
+                }
+            ?>`,
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			var methodNode *sitter.Node
+			var findMethod func(*sitter.Node)
+			findMethod = func(n *sitter.Node) {
+				if n == nil {
+					return
+				}
+				if n.Type() == "method_declaration" {
+					methodNode = n
+					return
+				}
+				for i := 0; i < int(n.NamedChildCount()); i++ {
+					findMethod(n.NamedChild(i))
+				}
+			}
+			findMethod(node)
+			if methodNode == nil {
+				t.Fatal("No method declaration node found")
+			}
+			result := handler.IsGetterSetter(methodNode, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsGetterSetter() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+}
+</document_content>
+</document>
+<document index="29">
+<source>filefusion/internal/core/cleaner/handlers/typescript_handler_test.go</source>
+<document_content>package handlers
+import "testing"
+func TestTypeScriptHandler(t *testing.T) {
+	handler := &TypeScriptHandler{}
+	importTypes := handler.GetImportTypes()
+	baseImportTypes := handler.JavaScriptHandler.GetImportTypes()
+	for _, baseType := range baseImportTypes {
+		found := false
+		for _, importType := range importTypes {
+			if importType == baseType {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("TypeScript handler missing base import type: %s", baseType)
+		}
+	}
+	if len(importTypes) <= len(baseImportTypes) {
+		t.Error("TypeScript handler should have additional import types")
+	}
+	extraTypes := []string{"import_require_clause", "import_alias"}
+	for _, extraType := range extraTypes {
+		found := false
+		for _, importType := range importTypes {
+			if importType == extraType {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("TypeScript handler missing import type: %s", extraType)
+		}
+	}
+}
+</document_content>
+</document>
+<document index="30">
+<source>filefusion/internal/core/cleaner/types.go</source>
+<document_content>package cleaner
+type Language string
+const (
+	LangGo         Language = "go"
+	LangJava       Language = "java"
+	LangPython     Language = "python"
+	LangSwift      Language = "swift"
+	LangKotlin     Language = "kotlin"
+	LangSQL        Language = "sql"
+	LangHTML       Language = "html"
+	LangJavaScript Language = "javascript"
+	LangTypeScript Language = "typescript"
+	LangCSS        Language = "css"
+	LangCPP        Language = "cpp"
+	LangCSharp     Language = "csharp"
+	LangPHP        Language = "php"
+	LangRuby       Language = "ruby"
+	LangBash       Language = "bash"
+)
+</document_content>
+</document>
+<document index="31">
+<source>filefusion/internal/core/cleaner/cleaner_test.go</source>
+<document_content>package cleaner
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"testing"
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/golang"
+)
+type errorReader struct {
+	err error
+}
+func (r *errorReader) Read(p []byte) (n int, err error) {
+	return 0, r.err
+}
+func TestNewCleaner(t *testing.T) {
+	tests := []struct {
+		name        string
+		lang        Language
+		options     *CleanerOptions
+		shouldError bool
+	}{
+		{
+			name:        "valid Go cleaner",
+			lang:        LangGo,
+			options:     DefaultOptions(),
+			shouldError: false,
+		},
+		{
+			name:        "nil options",
+			lang:        LangGo,
+			options:     nil,
+			shouldError: true,
+		},
+		{
+			name:        "unsupported language",
+			lang:        "invalid",
+			options:     DefaultOptions(),
+			shouldError: true,
+		},
+		{
+			name:        "valid Java cleaner",
+			lang:        LangJava,
+			options:     DefaultOptions(),
+			shouldError: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cleaner, err := NewCleaner(tt.lang, tt.options)
+			if tt.shouldError {
+				if err == nil {
+					t.Error("Expected error but got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+			if cleaner == nil {
+				t.Error("Expected non-nil cleaner")
+			}
+		})
+	}
+}
+func TestClean(t *testing.T) {
+	tests := []struct {
+		name           string
+		lang           Language
+		input          string
+		options        *CleanerOptions
+		expected       string
+		shouldContain  []string
+		shouldNotMatch []string
+		shouldError    bool
+	}{
+		{
+			name:  "remove Go comments",
+			lang:  LangGo,
+			input: "package main\n// This is a comment\nfunc main() {}\n/* Block comment */\n",
+			options: &CleanerOptions{
+				RemoveComments:      true,
+				PreserveDocComments: false,
+				OptimizeWhitespace:  true,
+				RemoveEmptyLines:    true,
+			},
+			expected: "package main\nfunc main() {}\n",
+		},
+		{
+			name:  "preserve Go doc comments",
+			lang:  LangGo,
+			input: "package main\n// Regular comment\n/// Doc comment\nfunc main() {}\n",
+			options: &CleanerOptions{
+				RemoveComments:      true,
+				PreserveDocComments: true,
+			},
+			shouldContain:  []string{"/// Doc comment"},
+			shouldNotMatch: []string{"// Regular comment"},
+		},
+		{
+			name:  "remove Java logging",
+			lang:  LangJava,
+			input: "class Test {\nvoid test() {\nlog.info(\"test\");\nSystem.out.println(\"debug\");\n}\n}",
+			options: &CleanerOptions{
+				RemoveLogging: true,
+			},
+			shouldNotMatch: []string{"log.info", "System.out.println"},
+		},
+		{
+			name:  "remove getters",
+			lang:  LangJava,
+			input: "public class Test {\n    public String getName() { return name; }\n    void otherMethod() {}\n}",
+			options: &CleanerOptions{
+				RemoveGettersSetters: true,
+			},
+			shouldContain:  []string{"otherMethod"},
+			shouldNotMatch: []string{"getName"},
+		},
+		{
+			name:  "optimize whitespace",
+			lang:  LangGo,
+			input: "package main\n\n\nfunc main() {\n\n\n}\n\n",
+			options: &CleanerOptions{
+				OptimizeWhitespace: true,
+				RemoveEmptyLines:   true,
+			},
+			expected: "package main\nfunc main() {\n}\n",
+		},
+		{
+			name:  "invalid syntax",
+			lang:  LangGo,
+			input: "package main\nfunc main() {",
+			options: &CleanerOptions{
+				RemoveComments: true,
+			},
+			shouldError: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cleaner, err := NewCleaner(tt.lang, tt.options)
+			if err != nil {
+				t.Fatalf("Failed to create cleaner: %v", err)
+			}
+			output, err := cleaner.Clean([]byte(tt.input))
+			if tt.shouldError {
+				if err == nil {
+					t.Error("Expected error but got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+			if tt.expected != "" && string(output) != tt.expected {
+				t.Errorf("Expected:\n%s\nGot:\n%s", tt.expected, string(output))
+			}
+			for _, s := range tt.shouldContain {
+				if !bytes.Contains(output, []byte(s)) {
+					t.Errorf("Expected output to contain %q", s)
+				}
+			}
+			for _, s := range tt.shouldNotMatch {
+				if bytes.Contains(output, []byte(s)) {
+					t.Errorf("Expected output to not contain %q", s)
+				}
+			}
+		})
+	}
+}
+func TestCleanFile(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		options     *CleanerOptions
+		shouldError bool
+	}{
+		{
+			name:        "valid input",
+			input:       "package main\nfunc main() {}\n",
+			shouldError: false,
+		},
+		{
+			name:        "invalid reader",
+			input:       "",
+			shouldError: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cleaner, err := NewCleaner(LangGo, DefaultOptions())
+			if err != nil {
+				t.Fatalf("Failed to create cleaner: %v", err)
+			}
+			var input bytes.Buffer
+			if tt.name == "invalid reader" {
+				r := &errorReader{err: fmt.Errorf("read error")}
+				var output bytes.Buffer
+				err = cleaner.CleanFile(r, &output)
+			} else {
+				input.WriteString(tt.input)
+				var output bytes.Buffer
+				err = cleaner.CleanFile(&input, &output)
+			}
+			if tt.shouldError {
+				if err == nil {
+					t.Error("Expected error but got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+		})
+	}
+}
+func TestProcessNode(t *testing.T) {
+	parser := sitter.NewParser()
+	parser.SetLanguage(golang.GetLanguage())
+	input := []byte("package main\n// Comment\nfunc main() {}\n")
+	tree, err := parser.ParseCtx(context.Background(), nil, input)
+	if err != nil {
+		t.Fatalf("Failed to parse input: %v", err)
+	}
+	defer tree.Close()
+	tests := []struct {
+		name           string
+		options        *CleanerOptions
+		shouldContain  []string
+		shouldNotMatch []string
+	}{
+		{
+			name: "remove comments",
+			options: &CleanerOptions{
+				RemoveComments:      true,
+				PreserveDocComments: false,
+			},
+			shouldNotMatch: []string{"// Comment"},
+		},
+		{
+			name: "preserve structure",
+			options: &CleanerOptions{
+				RemoveComments: true,
+			},
+			shouldContain: []string{"package main", "func main()"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cleaner, err := NewCleaner(LangGo, tt.options)
+			if err != nil {
+				t.Fatalf("Failed to create cleaner: %v", err)
+			}
+			content := make([]byte, len(input))
+			copy(content, input)
+			err = cleaner.processNode(tree.RootNode(), &content)
+			if err != nil {
+				t.Fatalf("Failed to process node: %v", err)
+			}
+			for _, s := range tt.shouldContain {
+				if !bytes.Contains(content, []byte(s)) {
+					t.Errorf("Expected output to contain %q", s)
+				}
+			}
+			for _, s := range tt.shouldNotMatch {
+				if bytes.Contains(content, []byte(s)) {
+					t.Errorf("Expected output to not contain %q", s)
+				}
+			}
+		})
+	}
+}
+func TestShouldRemoveComment(t *testing.T) {
+	parser := sitter.NewParser()
+	parser.SetLanguage(golang.GetLanguage())
+	tests := []struct {
+		name        string
+		options     *CleanerOptions
+		commentText string
+		shouldKeep  bool
+	}{
+		{
+			name: "regular comment with removal enabled",
+			options: &CleanerOptions{
+				RemoveComments:      true,
+				PreserveDocComments: false,
+			},
+			commentText: "// Regular comment",
+			shouldKeep:  false,
+		},
+		{
+			name: "doc comment with preservation enabled",
+			options: &CleanerOptions{
+				RemoveComments:      true,
+				PreserveDocComments: true,
+			},
+			commentText: "// Doc comment",
+			shouldKeep:  true,
+		},
+		{
+			name: "comment with removal disabled",
+			options: &CleanerOptions{
+				RemoveComments:      false,
+				PreserveDocComments: true,
+			},
+			commentText: "// Any comment",
+			shouldKeep:  true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cleaner, err := NewCleaner(LangGo, tt.options)
+			if err != nil {
+				t.Fatalf("Failed to create cleaner: %v", err)
+			}
+			tree, err := parser.ParseCtx(context.Background(), nil, []byte(tt.commentText))
+			if err != nil {
+				t.Fatalf("Failed to parse input: %v", err)
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			shouldRemove := cleaner.shouldRemoveComment(node, []byte(tt.commentText))
+			if shouldRemove == tt.shouldKeep {
+				t.Errorf("Expected shouldRemove=%v for comment %q", !tt.shouldKeep, tt.commentText)
+			}
+		})
+	}
+}
+</document_content>
+</document>
+<document index="32">
+<source>filefusion/internal/core/cleaner/handlers/sql_handler_test.go</source>
+<document_content>package handlers
+import (
+	"testing"
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/sql"
+)
+func TestSQLHandlerBasics(t *testing.T) {
+	handler := &SQLHandler{}
+	commentTypes := handler.GetCommentTypes()
+	expected := []string{"comment", "block_comment"}
+	if !stringSliceEqual(commentTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, commentTypes)
+	}
+	importTypes := handler.GetImportTypes()
+	expected = []string{"create_extension_statement", "use_statement"}
+	if !stringSliceEqual(importTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, importTypes)
+	}
+	if prefix := handler.GetDocCommentPrefix(); prefix != "--" {
+		t.Errorf("Expected '--', got %s", prefix)
+	}
+}
+func TestSQLLoggingCalls(t *testing.T) {
+	handler := &SQLHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(sql.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "select statement",
+			input:    "SELECT * FROM users;",
+			expected: false,
+		},
+		{
+			name:     "insert statement",
+			input:    "INSERT INTO logs (message) VALUES ('test');",
+			expected: false,
+		},
+		{
+			name:     "create table",
+			input:    "CREATE TABLE logs (id INT, message TEXT);",
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			result := handler.IsLoggingCall(node, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsLoggingCall() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+	if handler.IsLoggingCall(nil, []byte("")) {
+		t.Error("Expected IsLoggingCall to return false for nil node")
+	}
+	tree := parser.Parse(nil, []byte(""))
+	if tree == nil {
+		t.Fatal("Failed to parse empty input")
+	}
+	defer tree.Close()
+	if handler.IsLoggingCall(tree.RootNode(), []byte("")) {
+		t.Error("Expected IsLoggingCall to return false for empty content")
+	}
+	malformed := "SELECT * FROM"
+	tree = parser.Parse(nil, []byte(malformed))
+	if tree == nil {
+		t.Fatal("Failed to parse malformed input")
+	}
+	defer tree.Close()
+	if handler.IsLoggingCall(tree.RootNode(), []byte(malformed)) {
+		t.Error("Expected IsLoggingCall to return false for malformed input")
+	}
+}
+func TestSQLGetterSetter(t *testing.T) {
+	handler := &SQLHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(sql.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "select statement",
+			input:    "SELECT value FROM settings WHERE key = 'name';",
+			expected: false,
+		},
+		{
+			name:     "update statement",
+			input:    "UPDATE settings SET value = 'new' WHERE key = 'name';",
+			expected: false,
+		},
+		{
+			name:     "create function",
+			input:    "CREATE FUNCTION get_setting(p_key TEXT) RETURNS TEXT AS $$ SELECT value FROM settings WHERE key = p_key; $$ LANGUAGE SQL;",
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			result := handler.IsGetterSetter(node, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsGetterSetter() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+	if handler.IsGetterSetter(nil, []byte("")) {
+		t.Error("Expected IsGetterSetter to return false for nil node")
+	}
+	tree := parser.Parse(nil, []byte(""))
+	if tree == nil {
+		t.Fatal("Failed to parse empty input")
+	}
+	defer tree.Close()
+	if handler.IsGetterSetter(tree.RootNode(), []byte("")) {
+		t.Error("Expected IsGetterSetter to return false for empty content")
+	}
+	malformed := "CREATE FUNCTION get_value"
+	tree = parser.Parse(nil, []byte(malformed))
+	if tree == nil {
+		t.Fatal("Failed to parse malformed input")
+	}
+	defer tree.Close()
+	if handler.IsGetterSetter(tree.RootNode(), []byte(malformed)) {
+		t.Error("Expected IsGetterSetter to return false for malformed input")
+	}
+}
+</document_content>
+</document>
+<document index="33">
+<source>filefusion/internal/core/cleaner/handlers/swift_handler.go</source>
+<document_content>package handlers
+import (
+	"bytes"
+	"strings"
+	sitter "github.com/smacker/go-tree-sitter"
+)
+type SwiftHandler struct {
+	BaseHandler
+}
+func (h *SwiftHandler) GetCommentTypes() []string {
+	return []string{"comment", "multiline_comment", "documentation_comment"}
+}
+func (h *SwiftHandler) GetImportTypes() []string {
+	return []string{"import_declaration"}
+}
+func (h *SwiftHandler) GetDocCommentPrefix() string {
+	return "///"
+}
+func (h *SwiftHandler) IsLoggingCall(node *sitter.Node, content []byte) bool {
+	if node.Type() != "call_expression" {
+		return false
+	}
+	callText := content[node.StartByte():node.EndByte()]
+	return bytes.HasPrefix(callText, []byte("print(")) ||
+		bytes.HasPrefix(callText, []byte("debugPrint(")) ||
+		bytes.HasPrefix(callText, []byte("NSLog(")) ||
+}
+func (h *SwiftHandler) IsGetterSetter(node *sitter.Node, content []byte) bool {
+	nodeType := node.Type()
+	if nodeType == "variable_declaration" || nodeType == "getter_specifier" || nodeType == "setter_specifier" {
+		var findAccessor func(*sitter.Node) bool
+		findAccessor = func(n *sitter.Node) bool {
+			if n == nil {
+				return false
+			}
+			nType := n.Type()
+			if nType == "getter_specifier" || nType == "setter_specifier" {
+				return true
+			}
+			for i := 0; i < int(n.NamedChildCount()); i++ {
+				if findAccessor(n.NamedChild(i)) {
+					return true
+				}
+			}
+			return false
+		}
+		return findAccessor(node)
+	}
+	if nodeType == "function_declaration" {
+		funcText := string(content[node.StartByte():node.EndByte()])
+		funcName := ""
+		for i := 0; i < int(node.NamedChildCount()); i++ {
+			child := node.NamedChild(i)
+			if child.Type() == "simple_identifier" {
+				funcName = string(content[child.StartByte():child.EndByte()])
+				break
+			}
+		}
+		return (strings.HasPrefix(funcName, "get") && strings.Contains(funcText, "return")) ||
+			(strings.HasPrefix(funcName, "set") && strings.Contains(funcText, "="))
+	}
+	return false
+}
+</document_content>
+</document>
+<document index="34">
+<source>filefusion/internal/core/cleaner/handlers/swift_handler_test.go</source>
+<document_content>package handlers
+import (
+	"testing"
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/swift"
+)
+func TestSwiftHandlerBasics(t *testing.T) {
+	handler := &SwiftHandler{}
+	commentTypes := handler.GetCommentTypes()
+	expected := []string{"comment", "multiline_comment", "documentation_comment"}
+	if !stringSliceEqual(commentTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, commentTypes)
+	}
+	importTypes := handler.GetImportTypes()
+	expected = []string{"import_declaration"}
+	if !stringSliceEqual(importTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, importTypes)
+	}
+	if prefix := handler.GetDocCommentPrefix(); prefix != "///" {
+		t.Errorf("Expected '///', got %s", prefix)
+	}
+}
+func TestSwiftLoggingCalls(t *testing.T) {
+	handler := &SwiftHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(swift.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "print call",
+			input:    "print(\"Debug message\")",
+			expected: true,
+		},
+		{
+			name:     "debugPrint call",
+			input:    "debugPrint(\"Debug info\")",
+			expected: true,
+		},
+		{
+			name:     "NSLog call",
+			input:    "NSLog(\"Log message\")",
+			expected: true,
+		},
+		{
+			name:     "logger call",
+			input:    "logger.debug(\"Debug info\")",
+			expected: true,
+		},
+		{
+			name:     "regular function call",
+			input:    "process(\"data\")",
+			expected: false,
+		},
+		{
+			name:     "method call",
+			input:    "obj.process()",
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			var callNode *sitter.Node
+			var findCall func(*sitter.Node)
+			findCall = func(n *sitter.Node) {
+				if n.Type() == "call_expression" {
+					callNode = n
+					return
+				}
+				for i := 0; i < int(n.NamedChildCount()); i++ {
+					findCall(n.NamedChild(i))
+				}
+			}
+			findCall(node)
+			if callNode == nil {
+				t.Fatal("No call node found")
+			}
+			result := handler.IsLoggingCall(callNode, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsLoggingCall() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+}
+func TestSwiftGetterSetter(t *testing.T) {
+	handler := &SwiftHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(swift.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name: "computed property getter",
+			input: `var name: String {
+				get { return _name }
+			}`,
+			expected: true,
+		},
+		{
+			name: "computed property getter and setter",
+			input: `var name: String {
+				get { return _name }
+				set { _name = newValue }
+			}`,
+			expected: true,
+		},
+		{
+			name: "regular method",
+			input: `func process() {
+				doWork()
+			}`,
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			var propNode *sitter.Node
+			var findProp func(*sitter.Node)
+			findProp = func(n *sitter.Node) {
+				if n == nil {
+					return
+				}
+				if n.Type() == "variable_declaration" || n.Type() == "function_declaration" || n.Type() == "getter_specifier" || n.Type() == "setter_specifier" {
+					propNode = n
+					return
+				}
+				for i := 0; i < int(n.NamedChildCount()); i++ {
+					child := n.NamedChild(i)
+					findProp(child)
+					if propNode != nil {
+						return
+					}
+				}
+			}
+			findProp(node)
+			if propNode == nil {
+				t.Fatal("No property or function declaration node found")
+			}
+			result := handler.IsGetterSetter(propNode, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsGetterSetter() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+}
+</document_content>
+</document>
+<document index="35">
+<source>filefusion/internal/core/cleaner/handlers/kotlin_handler_test.go</source>
+<document_content>package handlers
+import (
+	"testing"
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/kotlin"
+)
+func TestKotlinHandlerBasics(t *testing.T) {
+	handler := &KotlinHandler{}
+	commentTypes := handler.GetCommentTypes()
+	expected := []string{"comment", "multiline_comment", "kdoc"}
+	if !stringSliceEqual(commentTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, commentTypes)
+	}
+	importTypes := handler.GetImportTypes()
+	expected = []string{"import_header"}
+	if !stringSliceEqual(importTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, importTypes)
+	}
+	if prefix := handler.GetDocCommentPrefix(); prefix != "/**" {
+		t.Errorf("Expected '/**', got %s", prefix)
+	}
+}
+func TestKotlinLoggingCalls(t *testing.T) {
+	handler := &KotlinHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(kotlin.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "println call",
+			input:    "println(\"Debug message\")",
+			expected: true,
+		},
+		{
+			name:     "print call",
+			input:    "print(\"Debug info\")",
+			expected: true,
+		},
+		{
+			name:     "Logger call",
+			input:    "Logger.debug(\"Debug info\")",
+			expected: true,
+		},
+		{
+			name:     "logger instance call",
+			input:    "logger.info(\"message\")",
+			expected: true,
+		},
+		{
+			name:     "log call",
+			input:    "log.info(\"Info message\")",
+			expected: true,
+		},
+		{
+			name:     "regular function call",
+			input:    "process(\"data\")",
+			expected: false,
+		},
+		{
+			name:     "method call",
+			input:    "obj.process()",
+			expected: false,
+		},
+		{
+			name:     "nested logging call",
+			input:    "logger.info(getData().toString())",
+			expected: true,
+		},
+		{
+			name:     "logging with string template",
+			input:    "println(\"Value: ${value}\")",
+			expected: true,
+		},
+		{
+			name:     "logging with multiple arguments",
+			input:    "logger.info(\"Message: {}\", value)",
+			expected: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			var callNode *sitter.Node
+			var findCall func(*sitter.Node)
+			findCall = func(n *sitter.Node) {
+				if n.Type() == "call_expression" {
+					callNode = n
+					return
+				}
+				for i := 0; i < int(n.NamedChildCount()); i++ {
+					findCall(n.NamedChild(i))
+				}
+			}
+			findCall(node)
+			if callNode == nil {
+				t.Fatal("No call node found")
+			}
+			result := handler.IsLoggingCall(callNode, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsLoggingCall() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+	if handler.IsLoggingCall(nil, []byte("")) {
+		t.Error("Expected IsLoggingCall to return false for nil node")
+	}
+	tree := parser.Parse(nil, []byte(""))
+	if tree == nil {
+		t.Fatal("Failed to parse empty input")
+	}
+	defer tree.Close()
+	if handler.IsLoggingCall(tree.RootNode(), []byte("")) {
+		t.Error("Expected IsLoggingCall to return false for empty content")
+	}
+	malformed := "println(\"unclosed string"
+	tree = parser.Parse(nil, []byte(malformed))
+	if tree == nil {
+		t.Fatal("Failed to parse malformed input")
+	}
+	defer tree.Close()
+	if handler.IsLoggingCall(tree.RootNode(), []byte(malformed)) {
+		t.Error("Expected IsLoggingCall to return false for malformed input")
+	}
+}
+func TestKotlinGetterSetter(t *testing.T) {
+	handler := &KotlinHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(kotlin.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name: "property with getter",
+			input: `var name: String
+				get() = field`,
+			expected: true,
+		},
+		{
+			name: "property with getter and setter",
+			input: `var name: String
+				get() = field
+				set(value) { field = value }`,
+			expected: true,
+		},
+		{
+			name: "getter function",
+			input: `fun getName(): String {
+				return name
+			}`,
+			expected: true,
+		},
+		{
+			name: "setter function",
+			input: `fun setName(value: String) {
+				this.name = value
+			}`,
+			expected: true,
+		},
+		{
+			name: "regular method",
+			input: `fun process() {
+				doWork()
+			}`,
+			expected: false,
+		},
+		{
+			name: "property with annotations",
+			input: `@JsonProperty
+				var name: String
+				get() = field`,
+			expected: true,
+		},
+		{
+			name: "property with complex type",
+			input: `var items: List<Map<String, Int>>
+				get() = field`,
+			expected: true,
+		},
+		{
+			name: "nested property",
+			input: `class Outer {
+				inner class Inner {
+					var name: String
+					get() = field
+				}
+			}`,
+			expected: true,
+		},
+		{
+			name: "property with custom getter logic",
+			input: `var fullName: String
+				get() = "$firstName $lastName"`,
+			expected: true,
+		},
+		{
+			name: "property with visibility modifiers",
+			input: `private var _name: String = ""
+				public var name: String
+					get() = _name
+					set(value) { _name = value }`,
+			expected: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			var targetNode *sitter.Node
+			var findNode func(*sitter.Node)
+			findNode = func(n *sitter.Node) {
+				if n == nil {
+					return
+				}
+				if n.Type() == "property_declaration" || n.Type() == "function_declaration" {
+					targetNode = n
+					return
+				}
+				for i := 0; i < int(n.NamedChildCount()); i++ {
+					findNode(n.NamedChild(i))
+				}
+			}
+			findNode(node)
+			if targetNode == nil {
+				t.Fatal("No property or function declaration node found")
+			}
+			result := handler.IsGetterSetter(targetNode, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsGetterSetter() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+	if handler.IsGetterSetter(nil, []byte("")) {
+		t.Error("Expected IsGetterSetter to return false for nil node")
+	}
+	tree := parser.Parse(nil, []byte(""))
+	if tree == nil {
+		t.Fatal("Failed to parse empty input")
+	}
+	defer tree.Close()
+	if handler.IsGetterSetter(tree.RootNode(), []byte("")) {
+		t.Error("Expected IsGetterSetter to return false for empty content")
+	}
+	malformed := "var name: String get("
+	tree = parser.Parse(nil, []byte(malformed))
+	if tree == nil {
+		t.Fatal("Failed to parse malformed input")
+	}
+	defer tree.Close()
+	if handler.IsGetterSetter(tree.RootNode(), []byte(malformed)) {
+		t.Error("Expected IsGetterSetter to return false for malformed input")
+	}
+}
+func TestKotlinFindFirstChild(t *testing.T) {
+	parser := sitter.NewParser()
+	parser.SetLanguage(kotlin.GetLanguage())
+	tests := []struct {
+		name         string
+		input        string
+		searchType   string
+		shouldFind   bool
+		expectedText string
+	}{
+		{
+			name: "find simple identifier",
+			input: `fun test() {
+				val name = "test"
+			}`,
+			searchType:   "simple_identifier",
+			shouldFind:   true,
+			expectedText: "test",
+		},
+		{
+			name: "find in nested structure",
+			input: `class Test {
+				fun method() {
+					val x = 1
+				}
+			}`,
+			searchType:   "property_declaration",
+			shouldFind:   true,
+			expectedText: "val x = 1",
+		},
+		{
+			name:       "non-existent type",
+			input:      "val x = 1",
+			searchType: "non_existent_type",
+			shouldFind: false,
+		},
+		{
+			name:       "empty input",
+			input:      "",
+			searchType: "simple_identifier",
+			shouldFind: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			found := findFirstChild(tree.RootNode(), tt.searchType)
+			if tt.shouldFind {
+				if found == nil {
+					t.Errorf("Expected to find node of type %s, but found nil", tt.searchType)
+				} else if string([]byte(tt.input)[found.StartByte():found.EndByte()]) != tt.expectedText {
+					t.Errorf("Expected node text %q, got %q", tt.expectedText, string([]byte(tt.input)[found.StartByte():found.EndByte()]))
+				}
+			} else if found != nil {
+				t.Errorf("Expected not to find node of type %s, but found one", tt.searchType)
+			}
+		})
+	}
+	if found := findFirstChild(nil, "any_type"); found != nil {
+		t.Error("Expected findFirstChild to return nil for nil node")
+	}
+}
+</document_content>
+</document>
+<document index="36">
+<source>filefusion/internal/core/cleaner/handlers/ruby_handler_test.go</source>
+<document_content>package handlers
+import (
+	"testing"
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/ruby"
+)
+func TestRubyHandlerBasics(t *testing.T) {
+	handler := &RubyHandler{}
+	commentTypes := handler.GetCommentTypes()
+	expected := []string{"comment"}
+	if !stringSliceEqual(commentTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, commentTypes)
+	}
+	importTypes := handler.GetImportTypes()
+	expected = []string{"require", "include", "require_relative"}
+	if !stringSliceEqual(importTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, importTypes)
+	}
+	if prefix := handler.GetDocCommentPrefix(); prefix != "#" {
+		t.Errorf("Expected '#', got %s", prefix)
+	}
+}
+func TestRubyLoggingCalls(t *testing.T) {
+	handler := &RubyHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(ruby.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "puts call",
+			input:    "puts 'Debug message'",
+			expected: true,
+		},
+		{
+			name:     "print call",
+			input:    "print 'Debug info'",
+			expected: true,
+		},
+		{
+			name:     "p call",
+			input:    "p object",
+			expected: true,
+		},
+		{
+			name:     "logger call",
+			input:    "logger.info('Log message')",
+			expected: true,
+		},
+		{
+			name:     "logger with block",
+			input:    "logger.debug { 'Debug info' }",
+			expected: true,
+		},
+		{
+			name:     "regular method call",
+			input:    "process_data('input')",
+			expected: false,
+		},
+		{
+			name:     "method with puts in name",
+			input:    "outputs('test')",
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			var callNode *sitter.Node
+			var findCall func(*sitter.Node)
+			findCall = func(n *sitter.Node) {
+				if n == nil {
+					return
+				}
+				nodeType := n.Type()
+				if nodeType == "call" || nodeType == "method_call" || nodeType == "command" {
+					callNode = n
+					return
+				}
+				for i := 0; i < int(n.NamedChildCount()); i++ {
+					findCall(n.NamedChild(i))
+				}
+			}
+			findCall(node)
+			if callNode == nil {
+				t.Logf("AST: %s", node.String())
+				t.Fatal("No call node found")
+			}
+			result := handler.IsLoggingCall(callNode, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsLoggingCall() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+	if handler.IsLoggingCall(nil, []byte("")) {
+		t.Error("Expected IsLoggingCall to return false for nil node")
+	}
+	tree := parser.Parse(nil, []byte(""))
+	if tree == nil {
+		t.Fatal("Failed to parse empty input")
+	}
+	defer tree.Close()
+	if handler.IsLoggingCall(tree.RootNode(), []byte("")) {
+		t.Error("Expected IsLoggingCall to return false for empty content")
+	}
+	malformed := "puts 'unclosed string"
+	tree = parser.Parse(nil, []byte(malformed))
+	if tree == nil {
+		t.Fatal("Failed to parse malformed input")
+	}
+	defer tree.Close()
+	node := tree.RootNode()
+	if node == nil {
+		t.Fatal("Failed to get root node")
+	}
+	if handler.IsLoggingCall(node, []byte(malformed)) {
+		t.Error("Expected IsLoggingCall to return false for malformed input")
+	}
+}
+func TestRubyGetterSetter(t *testing.T) {
+	handler := &RubyHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(ruby.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "attr_reader",
+			input:    "attr_reader :name",
+			expected: true,
+		},
+		{
+			name:     "attr_writer",
+			input:    "attr_writer :name",
+			expected: true,
+		},
+		{
+			name:     "attr_accessor",
+			input:    "attr_accessor :name, :age",
+			expected: true,
+		},
+		{
+			name:     "getter method",
+			input:    "def get_name\n  @name\nend",
+			expected: true,
+		},
+		{
+			name:     "setter method",
+			input:    "def set_name(value)\n  @name = value\nend",
+			expected: true,
+		},
+		{
+			name:     "regular method",
+			input:    "def process\n  do_work\nend",
+			expected: false,
+		},
+		{
+			name:     "method with get in name",
+			input:    "def forget\n  clear_memory\nend",
+			expected: false,
+		},
+		{
+			name:     "multiple attr_readers",
+			input:    "attr_reader :name, :age, :email",
+			expected: true,
+		},
+		{
+			name:     "attr_accessor with symbols",
+			input:    "attr_accessor :first_name, :last_name",
+			expected: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			var targetNode *sitter.Node
+			var findNode func(*sitter.Node)
+			findNode = func(n *sitter.Node) {
+				if n == nil {
+					return
+				}
+				nodeType := n.Type()
+				if nodeType == "call" || nodeType == "method" || nodeType == "method_definition" {
+					targetNode = n
+					return
+				}
+				for i := 0; i < int(n.NamedChildCount()); i++ {
+					findNode(n.NamedChild(i))
+				}
+			}
+			findNode(node)
+			if targetNode == nil {
+				t.Logf("AST: %s", node.String())
+				t.Fatal("No call or method node found")
+			}
+			result := handler.IsGetterSetter(targetNode, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsGetterSetter() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+	if handler.IsGetterSetter(nil, []byte("")) {
+		t.Error("Expected IsGetterSetter to return false for nil node")
+	}
+	tree := parser.Parse(nil, []byte(""))
+	if tree == nil {
+		t.Fatal("Failed to parse empty input")
+	}
+	defer tree.Close()
+	node := tree.RootNode()
+	if node == nil {
+		t.Fatal("Failed to get root node")
+	}
+	if handler.IsGetterSetter(node, []byte("")) {
+		t.Error("Expected IsGetterSetter to return false for empty content")
+	}
+	malformed := "def get_name"
+	tree = parser.Parse(nil, []byte(malformed))
+	if tree == nil {
+		t.Fatal("Failed to parse malformed input")
+	}
+	defer tree.Close()
+	node = tree.RootNode()
+	if node == nil {
+		t.Fatal("Failed to get root node")
+	}
+	if handler.IsGetterSetter(node, []byte(malformed)) {
+		t.Error("Expected IsGetterSetter to return false for malformed input")
+	}
+}
+</document_content>
+</document>
+<document index="37">
+<source>filefusion/internal/core/cleaner/utility_test.go</source>
+<document_content>package cleaner
+import (
+	"testing"
+)
+func TestDefaultOptions(t *testing.T) {
+	options := DefaultOptions()
+	if options == nil {
+		t.Error("DefaultOptions() returned nil")
+	}
+	if !options.RemoveComments {
+		t.Error("RemoveComments should be true by default")
+	}
+	if !options.PreserveDocComments {
+		t.Error("PreserveDocComments should be true by default")
+	}
+	if options.RemoveImports {
+		t.Error("RemoveImports should be false by default")
+	}
+	if !options.RemoveLogging {
+		t.Error("RemoveLogging should be true by default")
+	}
+	if !options.RemoveGettersSetters {
+		t.Error("RemoveGettersSetters should be true by default")
+	}
+	if !options.OptimizeWhitespace {
+		t.Error("OptimizeWhitespace should be true by default")
+	}
+	if !options.RemoveEmptyLines {
+		t.Error("RemoveEmptyLines should be true by default")
+	}
+	if options.LoggingPrefixes == nil {
+		t.Error("LoggingPrefixes should not be nil")
+	}
+	expectedLanguages := []Language{
+		LangGo, LangJava, LangPython, LangJavaScript,
+		LangPHP, LangRuby, LangCSharp, LangSwift,
+		LangKotlin,
+	}
+	for _, lang := range expectedLanguages {
+		if prefixes, exists := options.LoggingPrefixes[lang]; !exists {
+			t.Errorf("Missing logging prefixes for language: %s", lang)
+		} else if len(prefixes) == 0 {
+			t.Errorf("Empty logging prefixes for language: %s", lang)
+		}
+	}
+}
+func TestGetSupportedLanguages(t *testing.T) {
+	langs := GetSupportedLanguages()
+	if len(langs) == 0 {
+		t.Error("GetSupportedLanguages() returned empty list")
+	}
+	required := map[Language]bool{
+		LangGo:         false,
+		LangJava:       false,
+		LangPython:     false,
+		LangJavaScript: false,
+		LangTypeScript: false,
+		LangPHP:        false,
+		LangRuby:       false,
+		LangCSharp:     false,
+	}
+	for _, lang := range langs {
+		if _, ok := required[lang]; ok {
+			required[lang] = true
+		}
+	}
+	for lang, found := range required {
+		if !found {
+			t.Errorf("Required language %s not found in supported languages", lang)
+		}
+	}
+}
+func TestNewCleanerValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		lang        Language
+		options     *CleanerOptions
+		shouldError bool
+	}{
+		{
+			name:        "nil options",
+			lang:        LangGo,
+			options:     nil,
+			shouldError: true,
+		},
+		{
+			name:        "invalid language",
+			lang:        "invalid",
+			options:     DefaultOptions(),
+			shouldError: true,
+		},
+		{
+			name:        "valid configuration",
+			lang:        LangGo,
+			options:     DefaultOptions(),
+			shouldError: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewCleaner(tt.lang, tt.options)
+			if tt.shouldError {
+				if err == nil {
+					t.Error("Expected error but got none")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+</document_content>
+</document>
+<document index="38">
+<source>filefusion/internal/core/cleaner/handlers/python_handler_test.go</source>
+<document_content>package handlers
+import (
+	"testing"
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/python"
+)
+func TestPythonHandlerBasics(t *testing.T) {
+	handler := &PythonHandler{}
+	commentTypes := handler.GetCommentTypes()
+	if len(commentTypes) != 1 || commentTypes[0] != "comment" {
+		t.Errorf("Expected ['comment'], got %v", commentTypes)
+	}
+	importTypes := handler.GetImportTypes()
+	expected := []string{"import_statement", "import_from_statement"}
+	if !stringSliceEqual(importTypes, expected) {
+		t.Errorf("Expected %v, got %v", expected, importTypes)
+	}
+	if prefix := handler.GetDocCommentPrefix(); prefix != `"""` {
+		t.Errorf("Expected '\"\"\"', got %s", prefix)
+	}
+}
+func TestPythonHandlerLogging(t *testing.T) {
+	handler := &PythonHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(python.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "simple print call",
+			input:    "print('Debug message')",
+			expected: true,
+		},
+		{
+			name:     "print with formatting",
+			input:    "print(f'Value is {value}')",
+			expected: true,
+		},
+		{
+			name:     "logging module info",
+			input:    "logging.info('Info message')",
+			expected: true,
+		},
+		{
+			name:     "logging module debug",
+			input:    "logging.debug('Debug info')",
+			expected: true,
+		},
+		{
+			name:     "logging module error",
+			input:    "logging.error('Error occurred')",
+			expected: true,
+		},
+		{
+			name:     "logger instance debug",
+			input:    "logger.debug('Debug info')",
+			expected: true,
+		},
+		{
+			name:     "logger instance info",
+			input:    "logger.info('Info message')",
+			expected: true,
+		},
+		{
+			name:     "regular function call",
+			input:    "process_data('input')",
+			expected: false,
+		},
+		{
+			name:     "method call",
+			input:    "obj.process()",
+			expected: false,
+		},
+		{
+			name:     "print-like method",
+			input:    "printer.execute('message')",
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			var callNode *sitter.Node
+			var findCall func(*sitter.Node)
+			findCall = func(n *sitter.Node) {
+				if n.Type() == "call" {
+					callNode = n
+					return
+				}
+				for i := 0; i < int(n.NamedChildCount()); i++ {
+					findCall(n.NamedChild(i))
+				}
+			}
+			findCall(node)
+			if callNode == nil {
+				t.Fatal("No call node found")
+			}
+			result := handler.IsLoggingCall(callNode, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsLoggingCall() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+}
+func TestPythonHandlerGetterSetter(t *testing.T) {
+	handler := &PythonHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(python.GetLanguage())
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name: "property getter",
+			input: `@property
+def name(self):
+    return self._name`,
+			expected: true,
+		},
+		{
+			name: "property with decorator and docstring",
+			input: `@property
+def name(self):
+    """Get the name value."""
+    return self._name`,
+			expected: true,
+		},
+		{
+			name: "traditional getter",
+			input: `def get_name(self):
+    return self._name`,
+			expected: true,
+		},
+		{
+			name: "traditional setter",
+			input: `def set_name(self, value):
+    self._name = value`,
+			expected: true,
+		},
+		{
+			name: "get method with validation",
+			input: `def get_value(self):
+    if self._value is None:
+        raise ValueError("Value not set")
+    return self._value`,
+			expected: true,
+		},
+		{
+			name: "set method with validation",
+			input: `def set_value(self, value):
+    if value < 0:
+        raise ValueError("Value must be positive")
+    self._value = value`,
+			expected: true,
+		},
+		{
+			name: "regular method",
+			input: `def process_data(self):
+    return self.data.process()`,
+			expected: false,
+		},
+		{
+			name: "get method with args",
+			input: `def get_item(self, index):
+    return self._items[index]`,
+			expected: true,
+		},
+		{
+			name: "method with get prefix",
+			input: `def getting_started():
+    print("Tutorial")`,
+			expected: false,
+		},
+		{
+			name: "non-property decorated method",
+			input: `@staticmethod
+def get_version():
+    return "1.0.0"`,
+			expected: true,
+		},
+		{
+			name: "unrelated decorator method",
+			input: `@deprecated
+def get_legacy_value():
+    return old_value`,
+			expected: true,
+		},
+		{
+			name: "complex getter",
+			input: `def get_calculated_value(self):
+    return sum(self._values) / len(self._values)`,
+			expected: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := parser.Parse(nil, []byte(tt.input))
+			if tree == nil {
+				t.Fatal("Failed to parse input")
+			}
+			defer tree.Close()
+			node := tree.RootNode()
+			var funcNode *sitter.Node
+			var findFunc func(*sitter.Node)
+			findFunc = func(n *sitter.Node) {
+				if n.Type() == "function_definition" {
+					funcNode = n
+					return
+				}
+				for i := 0; i < int(n.NamedChildCount()); i++ {
+					findFunc(n.NamedChild(i))
+				}
+			}
+			findFunc(node)
+			if funcNode == nil {
+				t.Fatal("No function definition node found")
+			}
+			result := handler.IsGetterSetter(funcNode, []byte(tt.input))
+			if result != tt.expected {
+				t.Errorf("Expected IsGetterSetter() = %v for input %q", tt.expected, tt.input)
+			}
+		})
+	}
+}
+func TestPythonHandlerEdgeCases(t *testing.T) {
+	handler := &PythonHandler{}
+	parser := sitter.NewParser()
+	parser.SetLanguage(python.GetLanguage())
+	if handler.IsLoggingCall(nil, []byte("")) {
+		t.Error("Expected IsLoggingCall to return false for nil node")
+	}
+	if handler.IsGetterSetter(nil, []byte("")) {
+		t.Error("Expected IsGetterSetter to return false for nil node")
+	}
+	tree := parser.Parse(nil, []byte(""))
+	if tree == nil {
+		t.Fatal("Failed to parse empty input")
+	}
+	defer tree.Close()
+	node := tree.RootNode()
+	if handler.IsLoggingCall(node, []byte("")) {
+		t.Error("Expected IsLoggingCall to return false for empty content")
+	}
+	if handler.IsGetterSetter(node, []byte("")) {
+		t.Error("Expected IsGetterSetter to return false for empty content")
+	}
+	malformed := "def get_value(self:"
+	tree = parser.Parse(nil, []byte(malformed))
+	if tree == nil {
+		t.Fatal("Failed to parse malformed input")
+	}
+	defer tree.Close()
+	node = tree.RootNode()
+	if handler.IsGetterSetter(node, []byte(malformed)) {
+		t.Error("Expected IsGetterSetter to return false for malformed input")
+	}
+}
+</document_content>
+</document>
+<document index="39">
+<source>filefusion/internal/core/types.go</source>
+<document_content>package core
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+	"github.com/drgsn/filefusion/internal/core/cleaner"
+)
+type FileContent struct {
+	Path      string `json:"path"`
+	Name      string `json:"name"`
+	Content   string `json:"content"`
+	Extension string `json:"extension"`
+	Size      int64  `json:"size"`
+}
+type OutputType string
+const (
+	ColorRed   = "\033[1;31m"
+	ColorGreen = "\033[0;32m"
+	ColorReset = "\033[0m"
+)
+const (
+	OutputTypeXML  OutputType = "XML"
+	OutputTypeJSON OutputType = "JSON"
+	OutputTypeYAML OutputType = "YAML"
+)
+type MixOptions struct {
+	InputPath      string
+	OutputPath     string
+	Pattern        string
+	Exclude        string
+	MaxFileSize    int64
+	MaxOutputSize  int64
+	OutputType     OutputType
+	CleanerOptions *cleaner.CleanerOptions
+	IgnoreSymlinks bool
+}
+func validatePattern(pattern string) error {
+	if pattern == "" {
+		return fmt.Errorf("pattern cannot be empty")
+	}
+	patterns := strings.Split(pattern, ",")
+	for _, p := range patterns {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if _, err := filepath.Match(p, "test"); err != nil {
+			return fmt.Errorf("syntax error in pattern %q: %w", p, err)
+		}
+	}
+	return nil
+}
+func validateExcludePatterns(exclude string) error {
+	if exclude == "" {
+		return nil
+	}
+	patterns := strings.Split(exclude, ",")
+	for _, p := range patterns {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if strings.Contains(p, "**") {
+			continue
+		}
+		if _, err := filepath.Match(p, "test"); err != nil {
+			return fmt.Errorf("invalid exclusion pattern %q: %w", p, err)
+		}
+	}
+	return nil
+}
+func (m *MixOptions) Validate() error {
+	if m.InputPath == "" {
+		return &MixError{Message: "input path is required"}
+	}
+	if m.OutputPath == "" {
+		return &MixError{Message: "output path is required"}
+	}
+	if err := validatePattern(m.Pattern); err != nil {
+		return err
+	}
+	if err := validateExcludePatterns(m.Exclude); err != nil {
+		return err
+	}
+	if m.MaxFileSize <= 0 {
+		return &MixError{Message: "max file size must be greater than 0"}
+	}
+	if m.MaxOutputSize <= 0 {
+		return &MixError{Message: "max output size must be greater than 0"}
+	}
+	switch m.OutputType {
+	case OutputTypeXML, OutputTypeJSON, OutputTypeYAML:
+	default:
+		return &MixError{Message: fmt.Sprintf("unsupported output type: %s", m.OutputType)}
+	}
+	return nil
+}
+type MixError struct {
+	File    string
+	Message string
+}
+func (e *MixError) Error() string {
+	if e.File != "" {
+		return "file " + e.File + ": " + e.Message
+	}
+	return e.Message
+}
+</document_content>
+</document>
+<document index="40">
+<source>filefusion/internal/core/output.go</source>
+<document_content>package core
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"text/template"
+	"gopkg.in/yaml.v3"
+)
+type OutputGenerator struct {
+	options *MixOptions
+	workDir string
+}
+func NewOutputGenerator(options *MixOptions) (*OutputGenerator, error) {
+	workDir, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get working directory: %w", err)
+	}
+	return &OutputGenerator{
+		options: options,
+		workDir: workDir,
+	}, nil
+}
+func (g *OutputGenerator) normalizePath(path string) string {
+	path = filepath.ToSlash(path)
+	workDir := filepath.ToSlash(g.workDir)
+	lastDir := filepath.Base(workDir)
+	workDirComponents := strings.Split(workDir, "/")
+	if len(workDirComponents) > 1 {
+		parentDir := strings.Join(workDirComponents[:len(workDirComponents)-1], "/")
+		if strings.HasPrefix(path, parentDir) {
+			path = strings.TrimPrefix(path, parentDir)
+			path = strings.TrimPrefix(path, "/")
+		}
+	}
+	if !strings.HasPrefix(path, lastDir+"/") && !strings.HasPrefix(path, lastDir) {
+		path = filepath.Join(lastDir, path)
+	}
+	return filepath.ToSlash(path)
+}
+func (g *OutputGenerator) Generate(contents []FileContent) error {
+	tempFile, err := os.CreateTemp("", "filefusion-*")
+	if err != nil {
+		return &MixError{
+			File:    g.options.OutputPath,
+			Message: fmt.Sprintf("error creating temporary file: %v", err),
+		}
+	}
+	tempPath := tempFile.Name()
+	defer os.Remove(tempPath)
+	normalizedContents := make([]FileContent, len(contents))
+	for i, content := range contents {
+		normalizedContents[i] = FileContent{
+			Path:      g.normalizePath(content.Path),
+			Name:      content.Name,
+			Content:   content.Content,
+			Extension: content.Extension,
+			Size:      content.Size,
+		}
+	}
+	switch g.options.OutputType {
+	case OutputTypeJSON:
+		err = g.generateJSON(tempFile, normalizedContents)
+	case OutputTypeYAML:
+		err = g.generateYAML(tempFile, normalizedContents)
+	case OutputTypeXML:
+		err = g.generateXML(tempFile, normalizedContents)
+	default:
+		return &MixError{Message: fmt.Sprintf("unsupported output type: %s", g.options.OutputType)}
+	}
+	if err != nil {
+		return err
+	}
+	tempFile.Close()
+	info, err := os.Stat(tempPath)
+	if err != nil {
+		return &MixError{Message: fmt.Sprintf("error checking output file size: %v", err)}
+	}
+	if info.Size() > g.options.MaxOutputSize {
+		return &MixError{
+			Message: fmt.Sprintf("output size (%d bytes) exceeds maximum allowed size (%d bytes)",
+				info.Size(), g.options.MaxOutputSize),
+		}
+	}
+	return os.Rename(tempPath, g.options.OutputPath)
+}
+func (g *OutputGenerator) generateJSON(file *os.File, contents []FileContent) error {
+	output := struct {
+		Documents []struct {
+			Index           int    `json:"index"`
+			Source          string `json:"source"`
+			DocumentContent string `json:"document_content"`
+		} `json:"documents"`
+	}{
+		Documents: make([]struct {
+			Index           int    `json:"index"`
+			Source          string `json:"source"`
+			DocumentContent string `json:"document_content"`
+		}, len(contents)),
+	}
+	for i, content := range contents {
+		output.Documents[i] = struct {
+			Index           int    `json:"index"`
+			Source          string `json:"source"`
+			DocumentContent string `json:"document_content"`
+		}{
+			Index:           i + 1,
+			Source:          content.Path,
+			DocumentContent: content.Content,
+		}
+	}
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(output); err != nil {
+		return &MixError{Message: fmt.Sprintf("error encoding JSON: %v", err)}
+	}
+	return nil
+}
+func (g *OutputGenerator) generateYAML(file *os.File, contents []FileContent) error {
+	docs := struct {
+		Documents []struct {
+			Index           int    `yaml:"index"`
+			Source          string `yaml:"source"`
+			DocumentContent string `yaml:"document_content"`
+		} `yaml:"documents"`
+	}{
+		Documents: make([]struct {
+			Index           int    `yaml:"index"`
+			Source          string `yaml:"source"`
+			DocumentContent string `yaml:"document_content"`
+		}, len(contents)),
+	}
+	for i, content := range contents {
+		docs.Documents[i] = struct {
+			Index           int    `yaml:"index"`
+			Source          string `yaml:"source"`
+			DocumentContent string `yaml:"document_content"`
+		}{
+			Index:           i + 1,
+			Source:          content.Path,
+			DocumentContent: content.Content,
+		}
+	}
+	encoder := yaml.NewEncoder(file)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(docs); err != nil {
+		return &MixError{Message: fmt.Sprintf("error encoding YAML: %v", err)}
+	}
+	return nil
+}
+func (g *OutputGenerator) generateXML(file *os.File, contents []FileContent) error {
+	const xmlTemplate = `<?xml version="1.0" encoding="UTF-8"?>
+<documents>{{range $index, $file := .}}
+<document index="{{add $index 1}}">
+<source>{{.Path}}</source>
+<document_content>{{.Content}}</document_content>
+</document>{{end}}
+</documents>`
+	t, err := template.New("llm").Funcs(template.FuncMap{
+		"add": func(a, b int) int { return a + b },
+	}).Parse(xmlTemplate)
+	if err != nil {
+		return &MixError{Message: fmt.Sprintf("error parsing template: %v", err)}
+	}
+	if err := t.Execute(file, contents); err != nil {
+		return &MixError{Message: fmt.Sprintf("error executing template: %v", err)}
+	}
+	return nil
+}
+</document_content>
+</document>
+<document index="41">
+<source>filefusion/internal/core/processor.go</source>
+<document_content>package core
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"github.com/drgsn/filefusion/internal/core/cleaner"
+)
+type FileResult struct {
+	Content FileContent
+	Error   error
+}
+type FileProcessor struct {
+	options  *MixOptions
+	cleaners map[cleaner.Language]*cleaner.Cleaner
+	mu       sync.RWMutex
+}
+func NewFileProcessor(options *MixOptions) *FileProcessor {
+	return &FileProcessor{
+		options:  options,
+		cleaners: make(map[cleaner.Language]*cleaner.Cleaner),
+	}
+}
+func (p *FileProcessor) ProcessFiles(paths []string) ([]FileContent, error) {
+	numWorkers := min(len(paths), 10)
+	results := make(chan FileResult, len(paths))
+	var wg sync.WaitGroup
+	jobs := make(chan string, len(paths))
+	for _, path := range paths {
+		jobs <- path
+	}
+	close(jobs)
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for path := range jobs {
+				result := p.processFile(path)
+				results <- result
+			}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+	var contents []FileContent
+	var errors []error
+	for result := range results {
+		if result.Error != nil {
+			errors = append(errors, result.Error)
+			continue
+		}
+		if result.Content.Size > 0 {
+			contents = append(contents, result.Content)
+		}
+	}
+	var firstError error
+	if len(errors) > 0 {
+		firstError = errors[0]
+	}
+	return contents, firstError
+}
+func (p *FileProcessor) processFile(path string) FileResult {
+	info, err := os.Stat(path)
+	if err != nil {
+		return FileResult{
+			Error: &MixError{
+				File:    path,
+				Message: fmt.Sprintf("error getting file info: %v", err),
+			},
+		}
+	}
+	if info.IsDir() {
+		return FileResult{
+			Error: &MixError{
+				File:    path,
+				Message: "is a directory",
+			},
+		}
+	}
+	if info.Size() > p.options.MaxFileSize {
+		fmt.Fprintf(os.Stderr, "Warning: Skipping %s (size %d bytes exceeds limit %d bytes)\n",
+			path, info.Size(), p.options.MaxFileSize)
+		return FileResult{}
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return FileResult{
+			Error: &MixError{
+				File:    path,
+				Message: fmt.Sprintf("error reading file: %v", err),
+			},
+		}
+	}
+	if p.options.CleanerOptions != nil {
+		cleaned, err := p.cleanContent(path, content)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to clean %s: %v\n", path, err)
+		} else {
+			content = cleaned
+		}
+	}
+	relPath, err := p.createRelativePath(path)
+	if err != nil {
+		relPath = path
+	}
+	return FileResult{
+		Content: FileContent{
+			Path:      filepath.ToSlash(relPath),
+			Name:      filepath.Base(path),
+			Extension: strings.TrimPrefix(filepath.Ext(path), "."),
+			Content:   string(content),
+			Size:      int64(len(content)),
+		},
+	}
+}
+func (p *FileProcessor) cleanContent(path string, content []byte) ([]byte, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "Recovered from panic in cleanContent for %s: %v\n", path, r)
+		}
+	}()
+	lang := p.detectLanguage(path)
+	if lang == "" {
+		return content, nil
+	}
+	c, err := p.getOrCreateCleaner(lang)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cleaner: %w", err)
+	}
+	cleaned, err := c.Clean(content)
+	if err != nil {
+		return nil, fmt.Errorf("failed to clean content: %w", err)
+	}
+	return cleaned, nil
+}
+func (p *FileProcessor) getOrCreateCleaner(lang cleaner.Language) (*cleaner.Cleaner, error) {
+	p.mu.RLock()
+	c, exists := p.cleaners[lang]
+	p.mu.RUnlock()
+	if exists {
+		return c, nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if c, exists = p.cleaners[lang]; exists {
+		return c, nil
+	}
+	c, err := cleaner.NewCleaner(lang, p.options.CleanerOptions)
+	if err != nil {
+		return nil, err
+	}
+	p.cleaners[lang] = c
+	return c, nil
+}
+func (p *FileProcessor) createRelativePath(path string) (string, error) {
+	baseDir := filepath.Clean(p.options.InputPath)
+	cleanPath := filepath.Clean(path)
+	baseDir = filepath.ToSlash(baseDir)
+	cleanPath = filepath.ToSlash(cleanPath)
+	relPath := cleanPath
+	if strings.HasPrefix(cleanPath, baseDir) {
+		relPath = cleanPath[len(baseDir):]
+		relPath = strings.TrimPrefix(relPath, "/")
+	}
+	return relPath, nil
+}
+func (p *FileProcessor) detectLanguage(path string) cleaner.Language {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".go":
+		return cleaner.LangGo
+	case ".java":
+		return cleaner.LangJava
+	case ".py":
+		return cleaner.LangPython
+	case ".js":
+		return cleaner.LangJavaScript
+	case ".ts":
+		return cleaner.LangTypeScript
+	case ".html":
+		return cleaner.LangHTML
+	case ".css":
+		return cleaner.LangCSS
+	case ".cpp", ".cc", ".h":
+		return cleaner.LangCPP
+	case ".cs":
+		return cleaner.LangCSharp
+	case ".php":
+		return cleaner.LangPHP
+	case ".rb":
+		return cleaner.LangRuby
+	case ".sh", ".bash":
+		return cleaner.LangBash
+	case ".swift":
+		return cleaner.LangSwift
+	case ".kt":
+		return cleaner.LangKotlin
+	case ".sql":
+		return cleaner.LangSQL
+	}
+	return ""
+}
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+</document_content>
+</document>
+<document index="42">
+<source>filefusion/internal/core/finder.go</source>
+<document_content>package core
+import (
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"github.com/bmatcuk/doublestar/v4"
+)
+type FileFinder struct {
+	includes       []string
+	excludes       []string
+	followSymlinks bool
+	seenPaths      map[string]bool
+	seenLinks      map[string]bool
+	mu             sync.Mutex
+}
+type Result struct {
+	Path string
+	Err  error
+}
+func NewFileFinder(includes, excludes []string, followSymlinks bool) *FileFinder {
+	return &FileFinder{
+		includes:       includes,
+		excludes:       excludes,
+		followSymlinks: followSymlinks,
+		seenPaths:      make(map[string]bool),
+		seenLinks:      make(map[string]bool),
+	}
+}
+func (ff *FileFinder) FindMatchingFiles(basePaths []string) ([]string, error) {
+	resultChan := make(chan Result)
+	var wg sync.WaitGroup
+	numWorkers := runtime.GOMAXPROCS(0)
+	pathChan := make(chan string, len(basePaths))
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go ff.worker(pathChan, resultChan, &wg)
+	}
+	go func() {
+		for _, path := range basePaths {
+			pathChan <- path
+		}
+		close(pathChan)
+	}()
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+	var matches []string
+	seen := make(map[string]bool)
+	var firstErr error
+	for result := range resultChan {
+		if result.Err != nil {
+			if firstErr == nil {
+				firstErr = result.Err
+			}
+			continue
+		}
+		if !seen[result.Path] {
+			matches = append(matches, result.Path)
+			seen[result.Path] = true
+		}
+	}
+	if firstErr != nil {
+		return matches, fmt.Errorf("errors occurred while finding files: %w", firstErr)
+	}
+	return matches, nil
+}
+func (ff *FileFinder) processSymlink(path string, resultChan chan<- Result) error {
+	realPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not resolve symlink %q: %v\n", path, err)
+		return nil
+	}
+	ff.mu.Lock()
+	seenBefore := ff.seenPaths[realPath]
+	ff.seenPaths[realPath] = true
+	ff.mu.Unlock()
+	if seenBefore {
+		return nil
+	}
+	realInfo, err := os.Stat(realPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not stat resolved symlink %q: %v\n", realPath, err)
+		return nil
+	}
+	if realInfo.IsDir() {
+		return filepath.WalkDir(realPath, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			return ff.handleEntry(p, d, resultChan)
+		})
+	}
+	normalizedPath := filepath.ToSlash(path)
+	include, err := ff.shouldIncludeFile(normalizedPath)
+	if err != nil {
+		return err
+	}
+	if include {
+		resultChan <- Result{Path: path}
+	}
+	return nil
+}
+func (ff *FileFinder) processRegularFile(path string, resultChan chan<- Result) error {
+	normalizedPath := filepath.ToSlash(path)
+	ff.mu.Lock()
+	seenBefore := ff.seenPaths[path]
+	ff.seenPaths[path] = true
+	ff.mu.Unlock()
+	if seenBefore {
+		return nil
+	}
+	include, err := ff.shouldIncludeFile(normalizedPath)
+	if err != nil {
+		return err
+	}
+	if include {
+		resultChan <- Result{Path: path}
+	}
+	return nil
+}
+func (ff *FileFinder) handleEntry(path string, d fs.DirEntry, resultChan chan<- Result) error {
+	info, err := d.Info()
+	if err != nil {
+		return fmt.Errorf("error getting file info for %q: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		ff.mu.Lock()
+		ff.seenLinks[path] = true
+		ff.mu.Unlock()
+		if !ff.followSymlinks {
+			return nil
+		}
+		return ff.processSymlink(path, resultChan)
+	}
+	if d.IsDir() {
+		return nil
+	}
+	return ff.processRegularFile(path, resultChan)
+}
+func (ff *FileFinder) worker(pathChan <-chan string, resultChan chan<- Result, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for basePath := range pathChan {
+		absPath, err := filepath.Abs(basePath)
+		if err != nil {
+			resultChan <- Result{Err: fmt.Errorf("error resolving path %q: %w", basePath, err)}
+			continue
+		}
+		err = filepath.WalkDir(absPath, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				if os.IsNotExist(err) || os.IsPermission(err) {
+					fmt.Fprintf(os.Stderr, "Warning: Skipping %s: %v\n", path, err)
+					return nil
+				}
+				return err
+			}
+			return ff.handleEntry(path, d, resultChan)
+		})
+		if err != nil {
+			resultChan <- Result{Err: fmt.Errorf("error walking path %q: %w", basePath, err)}
+		}
+	}
+}
+func (ff *FileFinder) GetRealPath(path string) (string, error) {
+	realPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("error resolving symlink %q: %w", path, err)
+	}
+	if runtime.GOOS == "darwin" && strings.HasPrefix(realPath, "/private") {
+		realPath = realPath[8:]
+	}
+	return realPath, nil
+}
+func (ff *FileFinder) IsSymlink(path string) (bool, error) {
+	ff.mu.Lock()
+	defer ff.mu.Unlock()
+	return ff.seenLinks[path], nil
+}
+func (ff *FileFinder) matchPattern(pattern, path, basename string) (bool, error) {
+	if !strings.Contains(pattern, "/") {
+		return doublestar.Match(pattern, basename)
+	}
+	return doublestar.Match(pattern, path)
+}
+func (ff *FileFinder) shouldIncludeFile(path string) (bool, error) {
+	basename := filepath.Base(path)
+	for _, pattern := range ff.excludes {
+		matched, err := ff.matchPattern(pattern, path, basename)
+		if err != nil {
+			return false, fmt.Errorf("invalid exclude pattern %q: %w", pattern, err)
+		}
+		if matched {
+			return false, nil
+		}
+	}
+	if len(ff.includes) == 0 {
+		return true, nil
+	}
+	for _, pattern := range ff.includes {
+		matched, err := ff.matchPattern(pattern, path, basename)
+		if err != nil {
+			return false, fmt.Errorf("invalid include pattern %q: %w", pattern, err)
+		}
+		if matched {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+</document_content>
+</document>
+<document index="43">
+<source>filefusion/internal/core/patterns.go</source>
+<document_content>package core
+import (
+	"fmt"
+	"strings"
+	"github.com/bmatcuk/doublestar/v4"
+)
+type PatternError struct {
+	Pattern string
+	Reason  string
+}
+func (e *PatternError) Error() string {
+	return fmt.Sprintf("invalid pattern %q: %s", e.Pattern, e.Reason)
+}
+type PatternValidator struct {
+	allowBraces    bool
+	allowNegation  bool
+	maxPatternLen  int
+	allowedSymbols []rune
+	bannedPatterns []string
+}
+func NewPatternValidator() *PatternValidator {
+	return &PatternValidator{
+		allowBraces:    true,
+		allowNegation:  true,
+		maxPatternLen:  1000,
+		allowedSymbols: []rune{'*', '?', '[', ']', '{', '}', ',', '!', '/'},
+		bannedPatterns: []string{
+			"../",
+			"/..",
+			"/**/../",
+			"**/.*/**",
+		},
+	}
+}
+func (v *PatternValidator) ValidatePattern(pattern string) error {
+	if strings.Contains(pattern, "\x00") {
+		return &PatternError{
+			Pattern: pattern,
+			Reason:  "pattern contains null bytes",
+		}
+	}
+	if len(pattern) > v.maxPatternLen {
+		return &PatternError{
+			Pattern: pattern,
+			Reason:  fmt.Sprintf("pattern too long (max %d chars)", v.maxPatternLen),
+		}
+	}
+	for _, banned := range v.bannedPatterns {
+		if strings.Contains(pattern, banned) {
+			return &PatternError{
+				Pattern: pattern,
+				Reason:  fmt.Sprintf("contains banned pattern: %q", banned),
+			}
+		}
+	}
+	if !v.allowNegation && strings.HasPrefix(pattern, "!") {
+		return &PatternError{
+			Pattern: pattern,
+			Reason:  "negation patterns are not allowed",
+		}
+	}
+	if !v.allowBraces && (strings.Contains(pattern, "{") || strings.Contains(pattern, "}")) {
+		return &PatternError{
+			Pattern: pattern,
+			Reason:  "brace expansion is not allowed",
+		}
+	}
+	if err := validateBraces(pattern); err != nil {
+		return err
+	}
+	if err := validateBrackets(pattern); err != nil {
+		return err
+	}
+	if !doublestar.ValidatePattern(pattern) {
+		return &PatternError{
+			Pattern: pattern,
+			Reason:  "invalid pattern syntax",
+		}
+	}
+	return nil
+}
+func validateBraces(pattern string) error {
+	stack := 0
+	for i, ch := range pattern {
+		switch ch {
+		case '{':
+			stack++
+		case '}':
+			stack--
+			if stack < 0 {
+				return &PatternError{
+					Pattern: pattern,
+					Reason:  fmt.Sprintf("unmatched closing brace at position %d", i),
+				}
+			}
+		}
+	}
+	if stack > 0 {
+		return &PatternError{
+			Pattern: pattern,
+			Reason:  "unclosed brace",
+		}
+	}
+	return nil
+}
+func validateBrackets(pattern string) error {
+	stack := 0
+	for i, ch := range pattern {
+		switch ch {
+		case '[':
+			stack++
+		case ']':
+			stack--
+			if stack < 0 {
+				return &PatternError{
+					Pattern: pattern,
+					Reason:  fmt.Sprintf("unmatched closing bracket at position %d", i),
+				}
+			}
+		}
+	}
+	if stack > 0 {
+		return &PatternError{
+			Pattern: pattern,
+			Reason:  "unclosed bracket",
+		}
+	}
+	return nil
+}
+func (v *PatternValidator) splitPatterns(pattern string) []string {
+	var patterns []string
+	var currentPattern strings.Builder
+	inBrace := 0
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '{':
+			inBrace++
+			currentPattern.WriteByte(pattern[i])
+		case '}':
+			inBrace--
+			currentPattern.WriteByte(pattern[i])
+		case ',':
+			if inBrace > 0 {
+				currentPattern.WriteByte(pattern[i])
+			} else if currentPattern.Len() > 0 {
+				patterns = append(patterns, currentPattern.String())
+				currentPattern.Reset()
+			}
+		default:
+			currentPattern.WriteByte(pattern[i])
+		}
+	}
+	if currentPattern.Len() > 0 {
+		patterns = append(patterns, currentPattern.String())
+	}
+	return patterns
+}
+func (v *PatternValidator) expandBracePattern(pattern string) []string {
+	idx := strings.Index(pattern, "{")
+	if idx < 0 {
+		return []string{pattern}
+	}
+	closeIdx := strings.LastIndex(pattern, "}")
+	if closeIdx <= idx {
+		return []string{pattern}
+	}
+	prefix := pattern[:idx]
+	suffix := pattern[closeIdx+1:]
+	options := strings.Split(pattern[idx+1:closeIdx], ",")
+	result := make([]string, len(options))
+	for i, opt := range options {
+		result[i] = prefix + opt + suffix
+	}
+	return result
+}
+func (v *PatternValidator) ExpandPattern(pattern string) ([]string, error) {
+	if pattern == "" {
+		return []string{}, nil
+	}
+	if err := validateBraces(pattern); err != nil {
+		return nil, err
+	}
+	if err := validateBrackets(pattern); err != nil {
+		return nil, err
+	}
+	patterns := v.splitPatterns(pattern)
+	var result []string
+	for _, p := range patterns {
+		expanded := v.expandBracePattern(p)
+		result = append(result, expanded...)
+	}
+	return result, nil
+}
+</document_content>
+</document>
+<document index="44">
+<source>filefusion/internal/core/types_test.go</source>
+<document_content>package core
+import (
+	"testing"
+	"github.com/stretchr/testify/assert"
+)
+func TestMixOptionsValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		options MixOptions
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid options",
+			options: MixOptions{
+				InputPath:     "/input",
+				OutputPath:    "/output",
+				Pattern:       "*.txt",
+				MaxFileSize:   1024,
+				MaxOutputSize: 2048,
+				OutputType:    OutputTypeJSON,
+			},
+			wantErr: false,
+		},
+		{
+			name: "empty input path",
+			options: MixOptions{
+				OutputPath:    "/output",
+				Pattern:       "*.txt",
+				MaxFileSize:   1024,
+				MaxOutputSize: 2048,
+				OutputType:    OutputTypeJSON,
+			},
+			wantErr: true,
+			errMsg:  "input path is required",
+		},
+		{
+			name: "empty output path",
+			options: MixOptions{
+				InputPath:     "/input",
+				Pattern:       "*.txt",
+				MaxFileSize:   1024,
+				MaxOutputSize: 2048,
+				OutputType:    OutputTypeJSON,
+			},
+			wantErr: true,
+			errMsg:  "output path is required",
+		},
+		{
+			name: "invalid pattern",
+			options: MixOptions{
+				InputPath:     "/input",
+				OutputPath:    "/output",
+				Pattern:       "[",
+				MaxFileSize:   1024,
+				MaxOutputSize: 2048,
+				OutputType:    OutputTypeJSON,
+			},
+			wantErr: true,
+			errMsg:  `syntax error in pattern "["`,
+		},
+		{
+			name: "invalid exclude pattern",
+			options: MixOptions{
+				InputPath:     "/input",
+				OutputPath:    "/output",
+				Pattern:       "*.txt",
+				Exclude:       "[",
+				MaxFileSize:   1024,
+				MaxOutputSize: 2048,
+				OutputType:    OutputTypeJSON,
+			},
+			wantErr: true,
+			errMsg:  `invalid exclusion pattern "["`,
+		},
+		{
+			name: "zero max file size",
+			options: MixOptions{
+				InputPath:     "/input",
+				OutputPath:    "/output",
+				Pattern:       "*.txt",
+				MaxFileSize:   0,
+				MaxOutputSize: 2048,
+				OutputType:    OutputTypeJSON,
+			},
+			wantErr: true,
+			errMsg:  "max file size must be greater than 0",
+		},
+		{
+			name: "zero max output size",
+			options: MixOptions{
+				InputPath:     "/input",
+				OutputPath:    "/output",
+				Pattern:       "*.txt",
+				MaxFileSize:   1024,
+				MaxOutputSize: 0,
+				OutputType:    OutputTypeJSON,
+			},
+			wantErr: true,
+			errMsg:  "max output size must be greater than 0",
+		},
+		{
+			name: "unsupported output type",
+			options: MixOptions{
+				InputPath:     "/input",
+				OutputPath:    "/output",
+				Pattern:       "*.txt",
+				MaxFileSize:   1024,
+				MaxOutputSize: 2048,
+				OutputType:    "INVALID",
+			},
+			wantErr: true,
+			errMsg:  "unsupported output type: INVALID",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.options.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+func TestValidatePattern(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		wantErr bool
+	}{
+		{
+			name:    "valid single pattern",
+			pattern: "*.txt",
+			wantErr: false,
+		},
+		{
+			name:    "valid multiple patterns",
+			pattern: "*.txt,*.go,*.md",
+			wantErr: false,
+		},
+		{
+			name:    "empty pattern",
+			pattern: "",
+			wantErr: true,
+		},
+		{
+			name:    "invalid pattern",
+			pattern: "[",
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validatePattern(tt.pattern)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+func TestValidateExcludePatterns(t *testing.T) {
+	tests := []struct {
+		name    string
+		exclude string
+		wantErr bool
+	}{
+		{
+			name:    "empty exclude",
+			exclude: "",
+			wantErr: false,
+		},
+		{
+			name:    "valid single pattern",
+			exclude: "*.tmp",
+			wantErr: false,
+		},
+		{
+			name:    "valid multiple patterns",
+			exclude: "*.tmp,*.log,*.bak",
+			wantErr: false,
+		},
+		{
+			name:    "glob pattern with **",
+			exclude: "**/vendor/**",
+			wantErr: false,
+		},
+		{
+			name:    "invalid pattern",
+			exclude: "[",
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateExcludePatterns(tt.exclude)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+func TestMixErrorString(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      MixError
+		expected string
+	}{
+		{
+			name: "error with file",
+			err: MixError{
+				File:    "test.txt",
+				Message: "file not found",
+			},
+			expected: "file test.txt: file not found",
+		},
+		{
+			name: "error without file",
+			err: MixError{
+				Message: "invalid operation",
+			},
+			expected: "invalid operation",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.err.Error())
+		})
+	}
+}
+</document_content>
+</document>
+<document index="45">
+<source>filefusion/internal/core/manager.go</source>
+<document_content>package core
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+)
+type FileManager struct {
+	maxFileSize   int64
+	maxOutputSize int64
+	outputType    OutputType
+}
+type FileGroup struct {
+	OutputPath string
+	Files      []string
+}
+func NewFileManager(maxFileSize, maxOutputSize int64, outputType OutputType) *FileManager {
+	return &FileManager{
+		maxFileSize:   maxFileSize,
+		maxOutputSize: maxOutputSize,
+		outputType:    outputType,
+	}
+}
+func (fm *FileManager) ValidateFiles(files []string) ([]string, error) {
+	var validFiles []string
+	var totalSize int64
+	var ignoredCount int
+	for _, file := range files {
+		info, err := os.Stat(file)
+		if err != nil {
+			return nil, fmt.Errorf("error getting file info: %w", err)
+		}
+		if info.Size() > fm.maxFileSize {
+			ignoredCount++
+			continue
+		}
+		validFiles = append(validFiles, file)
+		totalSize += info.Size()
+	}
+	if ignoredCount > 0 {
+	}
+	if len(validFiles) == 0 {
+		return nil, fmt.Errorf("no valid files found matching patterns")
+	}
+	if totalSize > fm.maxOutputSize {
+		return nil, fmt.Errorf("total size of valid files (%s) exceeds maximum output size (%s)",
+			formatSize(totalSize), formatSize(fm.maxOutputSize))
+	}
+	return validFiles, nil
+}
+func (fm *FileManager) GroupFilesByOutput(files []string, outputPaths []string) ([]FileGroup, error) {
+	if len(outputPaths) == 1 {
+		return []FileGroup{{
+			OutputPath: outputPaths[0],
+			Files:      files,
+		}}, nil
+	}
+	pathsWithoutExt := make(map[string]string)
+	for _, outPath := range outputPaths {
+		pathWithoutExt := strings.TrimSuffix(outPath, filepath.Ext(outPath))
+		pathsWithoutExt[pathWithoutExt] = outPath
+	}
+	groups := make(map[string][]string)
+	var unmatchedFiles []string
+	for _, file := range files {
+		filePathWithoutExt := strings.TrimSuffix(file, filepath.Ext(file))
+		bestMatch := fm.findBestMatchingPath(filePathWithoutExt, pathsWithoutExt)
+		if bestMatch == "" {
+			unmatchedFiles = append(unmatchedFiles, file)
+			continue
+		}
+		outputPath := pathsWithoutExt[bestMatch]
+		groups[outputPath] = append(groups[outputPath], file)
+	}
+	if len(unmatchedFiles) > 0 {
+		firstOutputWithoutExt := strings.TrimSuffix(outputPaths[0], filepath.Ext(outputPaths[0]))
+		unmatchedPath := firstOutputWithoutExt + "_unmatched.xml"
+		groups[unmatchedPath] = unmatchedFiles
+	}
+	var result []FileGroup
+	for outputPath, files := range groups {
+		result = append(result, FileGroup{
+			OutputPath: outputPath,
+			Files:      files,
+		})
+	}
+	return result, nil
+}
+func (fm *FileManager) DeriveOutputPaths(inputPaths []string, customOutputPath string) ([]string, error) {
+	currentDir, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	if customOutputPath != "" {
+		return []string{filepath.Join(currentDir, customOutputPath)}, nil
+	}
+	result := make([]string, len(inputPaths))
+	for i, path := range inputPaths {
+		if path == "." {
+			dirName := filepath.Base(currentDir)
+			result[i] = filepath.Join(currentDir, fm.addDefaultExtension(dirName))
+		} else {
+			result[i] = filepath.Join(currentDir, fm.deriveOutputName(path))
+		}
+	}
+	return result, nil
+}
+func (fm *FileManager) ParseSize(size string) (int64, error) {
+	size = strings.ToUpper(strings.ReplaceAll(size, " ", ""))
+	if size == "" {
+		return 0, fmt.Errorf("size cannot be empty")
+	}
+	var multiplier int64 = 1
+	var value string
+	switch {
+	case strings.HasSuffix(size, "TB"):
+		multiplier = 1024 * 1024 * 1024 * 1024
+		value = strings.TrimSuffix(size, "TB")
+	case strings.HasSuffix(size, "GB"):
+		multiplier = 1024 * 1024 * 1024
+		value = strings.TrimSuffix(size, "GB")
+	case strings.HasSuffix(size, "MB"):
+		multiplier = 1024 * 1024
+		value = strings.TrimSuffix(size, "MB")
+	case strings.HasSuffix(size, "KB"):
+		multiplier = 1024
+		value = strings.TrimSuffix(size, "KB")
+	case strings.HasSuffix(size, "B"):
+		value = strings.TrimSuffix(size, "B")
+	default:
+		return 0, fmt.Errorf("invalid size format: must end with B, KB, MB, GB, or TB")
+	}
+	num, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid size number: %w", err)
+	}
+	if num <= 0 {
+		return 0, fmt.Errorf("size must be a positive number")
+	}
+	return num * multiplier, nil
+}
+func (fm *FileManager) findBestMatchingPath(filePath string, dirPaths map[string]string) string {
+	var bestMatch string
+	var maxCommonSegments int
+	fileComponents := strings.Split(filepath.Clean(filePath), string(os.PathSeparator))
+	for dirPath := range dirPaths {
+		dirComponents := strings.Split(filepath.Clean(dirPath), string(os.PathSeparator))
+		commonSegments := fm.countCommonSegments(fileComponents, dirComponents)
+		if commonSegments > maxCommonSegments || bestMatch == "" {
+			maxCommonSegments = commonSegments
+			bestMatch = dirPath
+		}
+	}
+	if maxCommonSegments > 0 {
+		return bestMatch
+	}
+	return ""
+}
+func (fm *FileManager) countCommonSegments(a, b []string) int {
+	count := 0
+	for i := 0; i < len(a) && i < len(b); i++ {
+		if a[i] != b[i] {
+			break
+		}
+		count++
+	}
+	return count
+}
+func (fm *FileManager) deriveOutputName(path string) string {
+	base := filepath.Base(strings.TrimSuffix(path, string(os.PathSeparator)))
+	return fm.addDefaultExtension(base)
+}
+func (fm *FileManager) addDefaultExtension(name string) string {
+	switch fm.outputType {
+	case OutputTypeJSON:
+		return name + ".json"
+	case OutputTypeYAML:
+		return name + ".yaml"
+	default:
+		return name + ".xml"
+	}
+}
+func formatSize(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+</document_content>
+</document>
+<document index="46">
+<source>filefusion/internal/core/processor_test.go</source>
+<document_content>package core
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+	"unicode/utf8"
+	"github.com/drgsn/filefusion/internal/core/cleaner"
+)
+func normalizeWhitespace(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.TrimSpace(s)
+	s = strings.Join(strings.Fields(strings.ReplaceAll(s, "\n", " ")), " ")
+	return s
+}
+func TestFileProcessor(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "filefusion-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	files := map[string]struct {
+		size    int64
+		content string
+	}{
+		"small.txt":     {size: 100, content: strings.Repeat("a", 100)},
+		"medium.txt":    {size: 1024, content: strings.Repeat("b", 1024)},
+		"large.txt":     {size: 2048, content: strings.Repeat("c", 2048)},
+		"test/nest.txt": {size: 100, content: strings.Repeat("d", 100)},
+	}
+	for name, info := range files {
+		path := filepath.Join(tmpDir, name)
+		err := os.MkdirAll(filepath.Dir(path), 0755)
+		if err != nil {
+			t.Fatalf("Failed to create directory for %s: %v", name, err)
+		}
+		err = os.WriteFile(path, []byte(info.content), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create test file %s: %v", name, err)
+		}
+	}
+	tests := []struct {
+		name          string
+		maxSize       int64
+		expectedCount int
+	}{
+		{
+			name:          "process all files",
+			maxSize:       3000,
+			expectedCount: 4,
+		},
+		{
+			name:          "size limit excludes large file",
+			maxSize:       1500,
+			expectedCount: 3,
+		},
+		{
+			name:          "small size limit",
+			maxSize:       500,
+			expectedCount: 2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			processor := NewFileProcessor(&MixOptions{
+				InputPath:   tmpDir,
+				MaxFileSize: tt.maxSize,
+			})
+			var paths []string
+			for name := range files {
+				paths = append(paths, filepath.Join(tmpDir, name))
+			}
+			contents, err := processor.ProcessFiles(paths)
+			if err != nil {
+				t.Fatalf("ProcessFiles failed: %v", err)
+			}
+			if len(contents) != tt.expectedCount {
+				t.Errorf("Expected %d files, got %d", tt.expectedCount, len(contents))
+			}
+			for _, content := range contents {
+				relPath, err := filepath.Rel(tmpDir, filepath.Join(tmpDir, content.Path))
+				if err != nil {
+					t.Fatalf("Failed to get relative path: %v", err)
+				}
+				expectedInfo, exists := files[relPath]
+				if !exists {
+					t.Errorf("Unexpected file in results: %s (relative path: %s)", content.Path, relPath)
+					continue
+				}
+				if content.Size != expectedInfo.size {
+					t.Errorf("Size mismatch for %s: expected %d, got %d",
+						relPath, expectedInfo.size, content.Size)
+				}
+				if content.Content != expectedInfo.content {
+					t.Errorf("Content mismatch for %s", relPath)
+				}
+			}
+		})
+	}
+}
+func TestFileProcessorErrors(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "filefusion-error-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	nestedDir := filepath.Join(tmpDir, "nested")
+	if err := os.MkdirAll(nestedDir, 0755); err != nil {
+		t.Fatalf("Failed to create nested directory: %v", err)
+	}
+	testFile := filepath.Join(nestedDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	processor := NewFileProcessor(&MixOptions{
+		InputPath:   tmpDir,
+		MaxFileSize: 1,
+	})
+	tests := []struct {
+		name        string
+		path        string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "process directory as file",
+			path:        nestedDir,
+			wantErr:     true,
+			errContains: "is a directory",
+		},
+		{
+			name:        "process non-existent file",
+			path:        filepath.Join(tmpDir, "nonexistent.txt"),
+			wantErr:     true,
+			errContains: "no such file",
+		},
+		{
+			name:    "process file exceeding size limit",
+			path:    testFile,
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := processor.processFile(tt.path)
+			if tt.wantErr {
+				if result.Error == nil {
+					t.Errorf("Expected error for %s", tt.name)
+					return
+				}
+				if tt.errContains != "" && !strings.Contains(strings.ToLower(result.Error.Error()), strings.ToLower(tt.errContains)) {
+					t.Errorf("Expected error containing %q, got %q", tt.errContains, result.Error)
+				}
+			} else {
+				if result.Error != nil {
+					t.Errorf("Unexpected error: %v", result.Error)
+				}
+			}
+		})
+	}
+}
+func TestProcessorConcurrency(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "filefusion-concurrent-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	files := []struct {
+		name        string
+		content     string
+		permissions os.FileMode
+		shouldError bool
+	}{
+		{"readable.txt", "test content", 0644, false},
+		{"unreadable.txt", "test content", 0000, true},
+		{"executable.txt", "test content", 0755, false},
+	}
+	var filePaths []string
+	for _, f := range files {
+		path := filepath.Join(tmpDir, f.name)
+		if err := os.WriteFile(path, []byte(f.content), f.permissions); err != nil {
+			t.Fatalf("Failed to create test file %s: %v", f.name, err)
+		}
+		filePaths = append(filePaths, path)
+		if err := os.Chmod(path, f.permissions); err != nil {
+			t.Fatalf("Failed to set permissions for %s: %v", f.name, err)
+		}
+	}
+	processor := NewFileProcessor(&MixOptions{
+		InputPath:   tmpDir,
+		MaxFileSize: 1024 * 1024,
+	})
+	contents, err := processor.ProcessFiles(filePaths)
+	if err == nil {
+		t.Error("Expected error due to unreadable file, got none")
+	}
+	readableCount := 0
+	for _, content := range contents {
+		if !strings.Contains(content.Path, "unreadable") {
+			readableCount++
+		}
+	}
+	expectedReadable := 2
+	if readableCount != expectedReadable {
+		t.Errorf("Expected %d readable files, got %d", expectedReadable, readableCount)
+	}
+}
+func TestProcessorEdgeCases(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "filefusion-paths-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	edgeCases := []struct {
+		path    string
+		content string
+	}{
+		{"file with spaces.go", "content"},
+		{"file#with#hashes.go", "content"},
+		{"file_with_漢字.go", "content"},
+		{"../outside/attempt.go", "content"},
+		{"./inside/./path.go", "content"},
+	}
+	for _, ec := range edgeCases {
+		path := filepath.Join(tmpDir, ec.path)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			continue
+		}
+		if err := os.WriteFile(path, []byte(ec.content), 0644); err != nil {
+			continue
+		}
+	}
+	processor := NewFileProcessor(&MixOptions{
+		InputPath:   tmpDir,
+		MaxFileSize: 1024,
+	})
+	paths := []string{
+		filepath.Join(tmpDir, "file with spaces.go"),
+		filepath.Join(tmpDir, "file#with#hashes.go"),
+		filepath.Join(tmpDir, "file_with_漢字.go"),
+	}
+	contents, err := processor.ProcessFiles(paths)
+	if err != nil {
+		t.Fatalf("Failed to process edge case paths: %v", err)
+	}
+	if len(contents) != 3 {
+		t.Errorf("Expected 3 processed files, got %d", len(contents))
+	}
+}
+func TestLanguageDetection(t *testing.T) {
+	processor := NewFileProcessor(&MixOptions{})
+	tests := []struct {
+		path     string
+		expected cleaner.Language
+	}{
+		{"test.go", cleaner.LangGo},
+		{"test.java", cleaner.LangJava},
+		{"test.py", cleaner.LangPython},
+		{"test.js", cleaner.LangJavaScript},
+		{"test.ts", cleaner.LangTypeScript},
+		{"test.html", cleaner.LangHTML},
+		{"test.css", cleaner.LangCSS},
+		{"test.cpp", cleaner.LangCPP},
+		{"test.cc", cleaner.LangCPP},
+		{"test.h", cleaner.LangCPP},
+		{"test.cs", cleaner.LangCSharp},
+		{"test.php", cleaner.LangPHP},
+		{"test.rb", cleaner.LangRuby},
+		{"test.sh", cleaner.LangBash},
+		{"test.bash", cleaner.LangBash},
+		{"test.swift", cleaner.LangSwift},
+		{"test.kt", cleaner.LangKotlin},
+		{"test.sql", cleaner.LangSQL},
+		{"test.txt", ""},
+		{"test", ""},
+		{"test.JAVA", cleaner.LangJava},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := processor.detectLanguage(tt.path)
+			if got != tt.expected {
+				t.Errorf("detectLanguage(%q) = %v, want %v", tt.path, got, tt.expected)
+			}
+		})
+	}
+}
+func TestCleanerCaching(t *testing.T) {
+	processor := NewFileProcessor(&MixOptions{
+		CleanerOptions: &cleaner.CleanerOptions{},
+	})
+	c1, err := processor.getOrCreateCleaner(cleaner.LangGo)
+	if err != nil {
+		t.Fatalf("Failed to create first cleaner: %v", err)
+	}
+	c2, err := processor.getOrCreateCleaner(cleaner.LangGo)
+	if err != nil {
+		t.Fatalf("Failed to get cached cleaner: %v", err)
+	}
+	if c1 != c2 {
+		t.Error("Expected same cleaner instance to be returned from cache")
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c, err := processor.getOrCreateCleaner(cleaner.LangGo)
+			if err != nil {
+				t.Errorf("Concurrent cleaner access failed: %v", err)
+			}
+			if c != c1 {
+				t.Error("Got different cleaner instance in concurrent access")
+			}
+		}()
+	}
+	wg.Wait()
+}
+func TestWorkerPoolBehavior(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "filefusion-workers-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	fileCount := 20
+	var paths []string
+	for i := 0; i < fileCount; i++ {
+		path := filepath.Join(tmpDir, fmt.Sprintf("test%d.txt", i))
+		if err := os.WriteFile(path, []byte("test content"), 0644); err != nil {
+			t.Fatalf("Failed to create test file: %v", err)
+		}
+		paths = append(paths, path)
+	}
+	processor := NewFileProcessor(&MixOptions{
+		InputPath:   tmpDir,
+		MaxFileSize: 1024,
+	})
+	start := time.Now()
+	contents, err := processor.ProcessFiles(paths)
+	duration := time.Since(start)
+	if err != nil {
+		t.Fatalf("ProcessFiles failed: %v", err)
+	}
+	if len(contents) != fileCount {
+		t.Errorf("Expected %d processed files, got %d", fileCount, len(contents))
+	}
+	expectedMaxDuration := time.Second
+	if duration > expectedMaxDuration {
+		t.Errorf("Processing took too long (%v), suggesting lack of concurrency", duration)
+	}
+}
+func TestRelativePathCreation(t *testing.T) {
+	tests := []struct {
+		name         string
+		inputPath    string
+		filePath     string
+		expectedPath string
+		expectError  bool
+	}{
+		{
+			name:         "simple relative path",
+			inputPath:    "/base/dir",
+			filePath:     "/base/dir/file.txt",
+			expectedPath: "file.txt",
+		},
+		{
+			name:         "nested relative path",
+			inputPath:    "/base/dir",
+			filePath:     "/base/dir/nested/file.txt",
+			expectedPath: "nested/file.txt",
+		},
+		{
+			name:         "path with dots",
+			inputPath:    "/base/dir",
+			filePath:     "/base/dir/./nested/../file.txt",
+			expectedPath: "file.txt",
+		},
+		{
+			name:         "path outside input directory",
+			inputPath:    "/base/dir",
+			filePath:     "/other/dir/file.txt",
+			expectedPath: "/other/dir/file.txt",
+		},
+		{
+			name:         "input path with trailing slash",
+			inputPath:    "/base/dir/",
+			filePath:     "/base/dir/file.txt",
+			expectedPath: "file.txt",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			processor := NewFileProcessor(&MixOptions{
+				InputPath: tt.inputPath,
+			})
+			got, err := processor.createRelativePath(tt.filePath)
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error, got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+			if got != tt.expectedPath {
+				t.Errorf("createRelativePath() = %v, want %v", got, tt.expectedPath)
+			}
+		})
+	}
+}
+func TestCleanerPanicRecovery(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "filefusion-panic-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	testFile := filepath.Join(tmpDir, "test.go")
+	testContent := "package main\n\nfunc main() {}\n"
+	if err := os.WriteFile(testFile, []byte(testContent), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	processor := NewFileProcessor(&MixOptions{
+		InputPath:      tmpDir,
+		CleanerOptions: cleaner.DefaultOptions(),
+		MaxFileSize:    1024,
+	})
+	result := processor.processFile(testFile)
+	if result.Error != nil {
+		t.Errorf("Expected no error, got: %v", result.Error)
+	}
+	expectedNormalized := normalizeWhitespace(testContent)
+	gotNormalized := normalizeWhitespace(result.Content.Content)
+	if expectedNormalized != gotNormalized {
+		t.Errorf("Content mismatch after normalization:\nExpected: '%s'\nGot: '%s'",
+			expectedNormalized, gotNormalized)
+	}
+}
+func TestCleanerErrorHandling(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "filefusion-error-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	testCases := []struct {
+		name           string
+		content        string
+		expectOriginal bool
+	}{
+		{
+			name:           "process Go file",
+			content:        "package main\n\nfunc main() {}\n",
+			expectOriginal: true,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			testFile := filepath.Join(tmpDir, "test.go")
+			if err := os.WriteFile(testFile, []byte(tc.content), 0644); err != nil {
+				t.Fatalf("Failed to create test file: %v", err)
+			}
+			processor := NewFileProcessor(&MixOptions{
+				InputPath:      tmpDir,
+				CleanerOptions: cleaner.DefaultOptions(),
+				MaxFileSize:    1024,
+			})
+			result := processor.processFile(testFile)
+			if result.Error != nil {
+				t.Fatalf("Unexpected error: %v", result.Error)
+			}
+			if tc.expectOriginal {
+				gotNormalized := normalizeWhitespace(result.Content.Content)
+				if !strings.Contains(gotNormalized, "package main") {
+					t.Errorf("Expected content to contain 'package main', got: '%s'", gotNormalized)
+				}
+				if !strings.Contains(gotNormalized, "func main()") {
+					t.Errorf("Expected content to contain 'func main()', got: '%s'", gotNormalized)
+				}
+			}
+		})
+	}
+}
+func TestProcessFileUnknownLanguage(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "filefusion-unknown-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	testFile := filepath.Join(tmpDir, "test.xyz")
+	testContent := "some random content\n"
+	if err := os.WriteFile(testFile, []byte(testContent), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	processor := NewFileProcessor(&MixOptions{
+		InputPath:      tmpDir,
+		CleanerOptions: cleaner.DefaultOptions(),
+		MaxFileSize:    1024,
+	})
+	result := processor.processFile(testFile)
+	if result.Error != nil {
+		t.Errorf("Expected no error for unknown language, got: %v", result.Error)
+	}
+	if result.Content.Content != testContent {
+		t.Errorf("Expected content to remain unchanged for unknown language.\nExpected: %q\nGot: %q",
+			testContent, result.Content.Content)
+	}
+	if result.Content.Extension != "xyz" {
+		t.Errorf("Expected extension 'xyz', got %q", result.Content.Extension)
+	}
+	if !strings.HasSuffix(result.Content.Path, "test.xyz") {
+		t.Errorf("Expected path to end with 'test.xyz', got %q", result.Content.Path)
+	}
+}
+func TestProcessFileEdgeCases(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "filefusion-edge-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	tests := []struct {
+		name        string
+		setup       func(dir string) string
+		maxFileSize int64
+		wantErr     bool
+		check       func(*testing.T, FileResult)
+	}{
+		{
+			name: "empty file",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "empty.go")
+				err := os.WriteFile(path, []byte(""), 0644)
+				if err != nil {
+					t.Fatalf("Failed to create empty file: %v", err)
+				}
+				return path
+			},
+			maxFileSize: 1024,
+			wantErr:     false,
+			check: func(t *testing.T, r FileResult) {
+				if r.Content.Size != 0 {
+					t.Errorf("Expected size 0 for empty file, got %d", r.Content.Size)
+				}
+			},
+		},
+		{
+			name: "whitespace only file",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "whitespace.go")
+				err := os.WriteFile(path, []byte("   \n\t\n   "), 0644)
+				if err != nil {
+					t.Fatalf("Failed to create whitespace file: %v", err)
+				}
+				return path
+			},
+			maxFileSize: 1024,
+			wantErr:     false,
+			check: func(t *testing.T, r FileResult) {
+				if len(strings.TrimSpace(r.Content.Content)) != 0 {
+					t.Error("Expected trimmed content to be empty")
+				}
+			},
+		},
+		{
+			name: "file with null bytes",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "null.go")
+				content := []byte("package main\x00func main() {}")
+				err := os.WriteFile(path, content, 0644)
+				if err != nil {
+					t.Fatalf("Failed to create file with null bytes: %v", err)
+				}
+				return path
+			},
+			maxFileSize: 1024,
+			wantErr:     false,
+			check: func(t *testing.T, r FileResult) {
+				if !strings.Contains(r.Content.Content, "\x00") {
+					t.Error("Expected content to preserve null bytes")
+				}
+			},
+		},
+		{
+			name: "file with invalid UTF-8",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "invalid_utf8.go")
+				content := []byte("package main\xFF\xFEfunc main() {}")
+				err := os.WriteFile(path, content, 0644)
+				if err != nil {
+					t.Fatalf("Failed to create file with invalid UTF-8: %v", err)
+				}
+				return path
+			},
+			maxFileSize: 1024,
+			wantErr:     false,
+			check: func(t *testing.T, r FileResult) {
+				if utf8.ValidString(r.Content.Content) {
+					t.Error("Expected content to remain invalid UTF-8")
+				}
+			},
+		},
+		{
+			name: "file at exact size limit",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "exact.go")
+				content := make([]byte, 10)
+				err := os.WriteFile(path, content, 0644)
+				if err != nil {
+					t.Fatalf("Failed to create exact size file: %v", err)
+				}
+				return path
+			},
+			maxFileSize: 10,
+			wantErr:     false,
+			check: func(t *testing.T, r FileResult) {
+				if r.Content.Size != 10 {
+					t.Errorf("Expected size 10, got %d", r.Content.Size)
+				}
+			},
+		},
+		{
+			name: "special characters in filename",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "special!@#$%^&()_+{}.go")
+				err := os.WriteFile(path, []byte("content"), 0644)
+				if err != nil {
+					t.Fatalf("Failed to create file with special chars: %v", err)
+				}
+				return path
+			},
+			maxFileSize: 1024,
+			wantErr:     false,
+			check: func(t *testing.T, r FileResult) {
+				if !strings.Contains(r.Content.Path, "!@#$%^&()_+") {
+					t.Error("Expected special characters to be preserved in path")
+				}
+			},
+		},
+		{
+			name: "nil cleaner options",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "test.go")
+				err := os.WriteFile(path, []byte("package main"), 0644)
+				if err != nil {
+					t.Fatalf("Failed to create test file: %v", err)
+				}
+				return path
+			},
+			maxFileSize: 1024,
+			wantErr:     false,
+			check: func(t *testing.T, r FileResult) {
+				if r.Content.Content != "package main" {
+					t.Error("Expected content to remain unchanged with nil cleaner options")
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filePath := tt.setup(tmpDir)
+			processor := NewFileProcessor(&MixOptions{
+				InputPath:      tmpDir,
+				MaxFileSize:    tt.maxFileSize,
+				CleanerOptions: nil,
+			})
+			result := processor.processFile(filePath)
+			if tt.wantErr {
+				if result.Error == nil {
+					t.Error("Expected error but got none")
+				}
+				return
+			}
+			if result.Error != nil {
+				t.Errorf("Unexpected error: %v", result.Error)
+				return
+			}
+			tt.check(t, result)
+		})
+	}
+}
+func TestProcessFileSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping symlink tests on Windows")
+	}
+	tmpDir, err := os.MkdirTemp("", "filefusion-symlink-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	realFile := filepath.Join(tmpDir, "real.go")
+	if err := os.WriteFile(realFile, []byte("package main"), 0644); err != nil {
+		t.Fatalf("Failed to create real file: %v", err)
+	}
+	validLink := filepath.Join(tmpDir, "valid.go")
+	if err := os.Symlink(realFile, validLink); err != nil {
+		t.Fatalf("Failed to create symlink: %v", err)
+	}
+	brokenLink := filepath.Join(tmpDir, "broken.go")
+	if err := os.Symlink(filepath.Join(tmpDir, "nonexistent.go"), brokenLink); err != nil {
+		t.Fatalf("Failed to create broken symlink: %v", err)
+	}
+	processor := NewFileProcessor(&MixOptions{
+		InputPath:   tmpDir,
+		MaxFileSize: 1024,
+	})
+	result := processor.processFile(validLink)
+	if result.Error != nil {
+		t.Errorf("Expected no error for valid symlink, got: %v", result.Error)
+	}
+	if result.Content.Content != "package main" {
+		t.Error("Expected to read content through valid symlink")
+	}
+	result = processor.processFile(brokenLink)
+	if result.Error == nil {
+		t.Error("Expected error for broken symlink, got none")
+	}
+}
+</document_content>
+</document>
+</documents>

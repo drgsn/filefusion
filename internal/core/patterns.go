@@ -31,8 +31,6 @@ func NewPatternValidator() *PatternValidator {
 		maxPatternLen:  1000, // Reasonable default
 		allowedSymbols: []rune{'*', '?', '[', ']', '{', '}', ',', '!', '/'},
 		bannedPatterns: []string{
-			"../", // Prevent directory traversal
-			"/..",
 			"/**/../",  // Prevent complex traversal
 			"**/.*/**", // prevent hidden files
 		},
@@ -47,7 +45,7 @@ func (v *PatternValidator) ValidatePattern(pattern string) error {
 			Reason:  "pattern contains null bytes",
 		}
 	}
-	
+
 	// Check pattern length
 	if len(pattern) > v.maxPatternLen {
 		return &PatternError{
@@ -105,20 +103,34 @@ func (v *PatternValidator) ValidatePattern(pattern string) error {
 
 func validateBraces(pattern string) error {
 	stack := 0
+	escaped := false
+
 	for i, ch := range pattern {
+		if escaped {
+			escaped = false
+			continue
+		}
+
 		switch ch {
+		case '\\':
+			escaped = true
 		case '{':
-			stack++
+			if !escaped {
+				stack++
+			}
 		case '}':
-			stack--
-			if stack < 0 {
-				return &PatternError{
-					Pattern: pattern,
-					Reason:  fmt.Sprintf("unmatched closing brace at position %d", i),
+			if !escaped {
+				stack--
+				if stack < 0 {
+					return &PatternError{
+						Pattern: pattern,
+						Reason:  fmt.Sprintf("unmatched closing brace at position %d", i),
+					}
 				}
 			}
 		}
 	}
+
 	if stack > 0 {
 		return &PatternError{
 			Pattern: pattern,
@@ -130,20 +142,34 @@ func validateBraces(pattern string) error {
 
 func validateBrackets(pattern string) error {
 	stack := 0
+	escaped := false
+
 	for i, ch := range pattern {
+		if escaped {
+			escaped = false
+			continue
+		}
+
 		switch ch {
+		case '\\':
+			escaped = true
 		case '[':
-			stack++
+			if !escaped {
+				stack++
+			}
 		case ']':
-			stack--
-			if stack < 0 {
-				return &PatternError{
-					Pattern: pattern,
-					Reason:  fmt.Sprintf("unmatched closing bracket at position %d", i),
+			if !escaped {
+				stack--
+				if stack < 0 {
+					return &PatternError{
+						Pattern: pattern,
+						Reason:  fmt.Sprintf("unmatched closing bracket at position %d", i),
+					}
 				}
 			}
 		}
 	}
+
 	if stack > 0 {
 		return &PatternError{
 			Pattern: pattern,
@@ -154,55 +180,166 @@ func validateBrackets(pattern string) error {
 }
 
 func (v *PatternValidator) splitPatterns(pattern string) []string {
+	if strings.HasPrefix(pattern, "\\") {
+		return []string{pattern}
+	}
+
 	var patterns []string
 	var currentPattern strings.Builder
+	escaped := false
 	inBrace := 0
 
 	for i := 0; i < len(pattern); i++ {
-		switch pattern[i] {
+		ch := pattern[i]
+
+		if escaped {
+			currentPattern.WriteByte('\\')
+			currentPattern.WriteByte(ch)
+			escaped = false
+			continue
+		}
+
+		switch ch {
+		case '\\':
+			escaped = true
 		case '{':
-			inBrace++
-			currentPattern.WriteByte(pattern[i])
+			if !escaped {
+				inBrace++
+			}
+			currentPattern.WriteByte(ch)
 		case '}':
-			inBrace--
-			currentPattern.WriteByte(pattern[i])
+			if !escaped {
+				inBrace--
+			}
+			currentPattern.WriteByte(ch)
 		case ',':
-			if inBrace > 0 {
-				currentPattern.WriteByte(pattern[i])
+			if inBrace > 0 || escaped {
+				currentPattern.WriteByte(ch)
 			} else if currentPattern.Len() > 0 {
 				patterns = append(patterns, currentPattern.String())
 				currentPattern.Reset()
 			}
 		default:
-			currentPattern.WriteByte(pattern[i])
+			currentPattern.WriteByte(ch)
 		}
 	}
+
 	if currentPattern.Len() > 0 {
-		patterns = append(patterns, currentPattern.String())
+		patterns = append(patterns, strings.TrimSpace(currentPattern.String()))
 	}
 	return patterns
 }
 
 func (v *PatternValidator) expandBracePattern(pattern string) []string {
-	idx := strings.Index(pattern, "{")
-	if idx < 0 {
+	// Check if the pattern starts with an escaped character
+	if strings.HasPrefix(pattern, "\\") {
 		return []string{pattern}
 	}
 
-	closeIdx := strings.LastIndex(pattern, "}")
-	if closeIdx <= idx {
-		return []string{pattern}
+	escaped := false
+	inBrace := 0
+	start := -1
+
+	for i := 0; i < len(pattern); i++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+
+		switch pattern[i] {
+		case '\\':
+			escaped = true
+		case '{':
+			if !escaped {
+				inBrace++
+				if inBrace == 1 {
+					start = i
+				}
+			}
+		case '}':
+			if !escaped && inBrace > 0 {
+				inBrace--
+				if inBrace == 0 && start >= 0 {
+					prefix := pattern[:start]
+					suffix := pattern[i+1:]
+					options := v.splitBraceOptions(pattern[start+1 : i])
+
+					expanded := make([]string, len(options))
+					for j, opt := range options {
+						expanded[j] = prefix + opt + suffix
+					}
+
+					if len(expanded) > 0 {
+						// Expand each pattern if it contains unescaped braces
+						var finalExpanded []string
+						for _, exp := range expanded {
+							if strings.Contains(exp, "{") && !strings.Contains(exp, "\\{") {
+								subExpanded := v.expandBracePattern(exp)
+								finalExpanded = append(finalExpanded, subExpanded...)
+							} else {
+								finalExpanded = append(finalExpanded, exp)
+							}
+						}
+						return finalExpanded
+					}
+				}
+			}
+		}
 	}
 
-	prefix := pattern[:idx]
-	suffix := pattern[closeIdx+1:]
-	options := strings.Split(pattern[idx+1:closeIdx], ",")
+	return []string{pattern}
+}
 
-	result := make([]string, len(options))
-	for i, opt := range options {
-		result[i] = prefix + opt + suffix
+func (v *PatternValidator) splitBraceOptions(content string) []string {
+	var options []string
+	var current strings.Builder
+	escaped := false
+	inBrace := 0
+
+	for i := 0; i < len(content); i++ {
+		ch := content[i]
+
+		if escaped {
+			current.WriteByte('\\')
+			current.WriteByte(ch)
+			escaped = false
+			continue
+		}
+
+		switch ch {
+		case '\\':
+			escaped = true
+		case '{':
+			if !escaped {
+				inBrace++
+			}
+			current.WriteByte(ch)
+		case '}':
+			if !escaped {
+				inBrace--
+			}
+			current.WriteByte(ch)
+		case ',':
+			if inBrace > 0 || escaped {
+				current.WriteByte(ch)
+			} else {
+				if current.Len() > 0 {
+					options = append(options, strings.TrimSpace(current.String()))
+					current.Reset()
+				} else {
+					options = append(options, "")
+				}
+			}
+		default:
+			current.WriteByte(ch)
+		}
 	}
-	return result
+
+	if current.Len() > 0 {
+		options = append(options, strings.TrimSpace(current.String()))
+	}
+
+	return options
 }
 
 func (v *PatternValidator) ExpandPattern(pattern string) ([]string, error) {
@@ -210,17 +347,15 @@ func (v *PatternValidator) ExpandPattern(pattern string) ([]string, error) {
 		return []string{}, nil
 	}
 
-	if err := validateBraces(pattern); err != nil {
+	if err := v.ValidatePattern(pattern); err != nil {
 		return nil, err
 	}
 
-	if err := validateBrackets(pattern); err != nil {
-		return nil, err
-	}
-
+	// First split on top-level commas
 	patterns := v.splitPatterns(pattern)
 	var result []string
 
+	// Expand each pattern
 	for _, p := range patterns {
 		expanded := v.expandBracePattern(p)
 		result = append(result, expanded...)
