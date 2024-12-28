@@ -19,6 +19,10 @@ type OutputGenerator struct {
 
 // NewOutputGenerator creates a new OutputGenerator instance
 func NewOutputGenerator(options *MixOptions) (*OutputGenerator, error) {
+	if options == nil {
+		return nil, fmt.Errorf("options cannot be nil")
+	}
+
 	workDir, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get working directory: %w", err)
@@ -31,32 +35,41 @@ func NewOutputGenerator(options *MixOptions) (*OutputGenerator, error) {
 }
 
 // normalizePath removes all but the last directory from the working directory path
+// and normalizes path separators
 func (g *OutputGenerator) normalizePath(path string) string {
-	// Convert both paths to use forward slashes for consistent handling
-	path = filepath.ToSlash(path)
-	workDir := filepath.ToSlash(g.workDir)
+	// Handle empty path
+	if path == "" {
+		return filepath.Base(g.workDir)
+	}
+
+	// Convert Windows backslashes to forward slashes first
+	path = strings.ReplaceAll(path, "\\", "/")
+	workDir := strings.ReplaceAll(g.workDir, "\\", "/")
+
+	// Remove drive letters if present (Windows paths)
+	if len(path) >= 2 && path[1] == ':' {
+		path = path[2:]
+	}
+	if len(workDir) >= 2 && workDir[1] == ':' {
+		workDir = workDir[2:]
+	}
+
+	// Clean the paths to handle .. and .
+	path = filepath.Clean(strings.TrimPrefix(path, "/"))
+	workDir = filepath.Clean(strings.TrimPrefix(workDir, "/"))
 
 	// Get the last directory from workDir
 	lastDir := filepath.Base(workDir)
 
-	// Split the workDir into components
-	workDirComponents := strings.Split(workDir, "/")
-	if len(workDirComponents) > 1 {
-		// Remove all directories except the last one from the path
-		parentDir := strings.Join(workDirComponents[:len(workDirComponents)-1], "/")
-		if strings.HasPrefix(path, parentDir) {
-			path = strings.TrimPrefix(path, parentDir)
-			// Remove leading slash if present
-			path = strings.TrimPrefix(path, "/")
-		}
+	// If the path starts with the working directory, remove it except for the last part
+	if strings.HasPrefix(path, workDir) {
+		path = strings.TrimPrefix(path, workDir)
+		path = strings.TrimPrefix(path, "/")
+		return filepath.Join(lastDir, path)
 	}
 
-	// If the path doesn't start with the last directory, add it
-	if !strings.HasPrefix(path, lastDir+"/") && !strings.HasPrefix(path, lastDir) {
-		path = filepath.Join(lastDir, path)
-	}
-
-	return filepath.ToSlash(path)
+	// For paths not under working directory, just prefix with lastDir
+	return filepath.Join(lastDir, path)
 }
 
 // Generate creates an output file containing the provided file contents
@@ -198,12 +211,20 @@ func (g *OutputGenerator) generateXML(file *os.File, contents []FileContent) err
 <documents>{{range $index, $file := .}}
 <document index="{{add $index 1}}">
 <source>{{.Path}}</source>
-<document_content>{{.Content}}</document_content>
+<document_content>{{- escapeXML .Content -}}</document_content>
 </document>{{end}}
 </documents>`
 
 	t, err := template.New("llm").Funcs(template.FuncMap{
 		"add": func(a, b int) int { return a + b },
+		"escapeXML": func(s string) string {
+			s = strings.ReplaceAll(s, "&", "&amp;")
+			s = strings.ReplaceAll(s, "<", "&lt;")
+			s = strings.ReplaceAll(s, ">", "&gt;")
+			s = strings.ReplaceAll(s, "'", "&apos;")
+			s = strings.ReplaceAll(s, "\"", "&quot;")
+			return s
+		},
 	}).Parse(xmlTemplate)
 	if err != nil {
 		return &MixError{Message: fmt.Sprintf("error parsing template: %v", err)}
