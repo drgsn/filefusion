@@ -106,10 +106,17 @@ func (ff *FileFinder) FindMatchingFiles(basePaths []string) ([]string, error) {
 // and pattern matching for the linked file.
 func (ff *FileFinder) processSymlink(path string, resultChan chan<- Result) error {
 	// Resolve the actual file path that the symlink points to
-	realPath, err := filepath.EvalSymlinks(path)
+	realPath, err := ff.GetRealPath(path)
 	if err != nil {
-		// For broken symlinks, just log and continue rather than returning an error
-		fmt.Fprintf(os.Stderr, "Warning: Could not resolve symlink %q: %v\n", path, err)
+		// For broken symlinks, just check the symlink itself
+		normalizedPath := filepath.ToSlash(path)
+		include, err := ff.shouldIncludeFile(normalizedPath)
+		if err != nil {
+			return err
+		}
+		if include {
+			resultChan <- Result{Path: path}
+		}
 		return nil
 	}
 
@@ -117,23 +124,30 @@ func (ff *FileFinder) processSymlink(path string, resultChan chan<- Result) erro
 	ff.mu.Lock()
 	seenBefore := ff.seenPaths[realPath]
 	ff.seenPaths[realPath] = true
+	ff.seenLinks[path] = true
 	ff.mu.Unlock()
 
-	// Skip if we've seen this path before (prevents cycles)
 	if seenBefore {
+		// If we've seen the target before, still check if we should include the symlink
+		normalizedPath := filepath.ToSlash(path)
+		include, err := ff.shouldIncludeFile(normalizedPath)
+		if err != nil {
+			return err
+		}
+		if include {
+			resultChan <- Result{Path: path}
+		}
 		return nil
 	}
 
 	// Get info about the real file
-	realInfo, err := os.Stat(realPath)
+	info, err := os.Stat(realPath)
 	if err != nil {
-		// Log warning and continue for stat errors
-		fmt.Fprintf(os.Stderr, "Warning: Could not stat resolved symlink %q: %v\n", realPath, err)
 		return nil
 	}
 
-	// For directory symlinks, add the path to be processed
-	if realInfo.IsDir() {
+	// For directory symlinks, walk the directory
+	if info.IsDir() {
 		return filepath.WalkDir(realPath, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -142,16 +156,16 @@ func (ff *FileFinder) processSymlink(path string, resultChan chan<- Result) erro
 		})
 	}
 
-	// Check if the symlink target matches our patterns
+	// For file symlinks, check the symlink path against patterns
 	normalizedPath := filepath.ToSlash(path)
 	include, err := ff.shouldIncludeFile(normalizedPath)
 	if err != nil {
 		return err
 	}
-
 	if include {
 		resultChan <- Result{Path: path}
 	}
+
 	return nil
 }
 
@@ -160,10 +174,16 @@ func (ff *FileFinder) processSymlink(path string, resultChan chan<- Result) erro
 func (ff *FileFinder) processRegularFile(path string, resultChan chan<- Result) error {
 	normalizedPath := filepath.ToSlash(path)
 
+	// Get real path for deduplication
+	realPath, err := ff.GetRealPath(path)
+	if err != nil {
+		realPath = path // If we can't resolve, use original path
+	}
+
 	// Check if we've seen this file before
 	ff.mu.Lock()
-	seenBefore := ff.seenPaths[path]
-	ff.seenPaths[path] = true
+	seenBefore := ff.seenPaths[realPath]
+	ff.seenPaths[realPath] = true
 	ff.mu.Unlock()
 
 	if seenBefore {
@@ -190,16 +210,26 @@ func (ff *FileFinder) handleEntry(path string, d fs.DirEntry, resultChan chan<- 
 		return fmt.Errorf("error getting file info for %q: %w", path, err)
 	}
 
-	// Handle symlinks specially if configured to follow them
+	// Check if it's a symlink
 	if info.Mode()&os.ModeSymlink != 0 {
-		ff.mu.Lock()
-		ff.seenLinks[path] = true
-		ff.mu.Unlock()
-
-		if !ff.followSymlinks {
-			return nil
+		if ff.followSymlinks {
+			// Process symlink
+			err := ff.processSymlink(path, resultChan)
+			if err != nil {
+				return fmt.Errorf("error processing symlink %q: %w", path, err)
+			}
+		} else {
+			// Even if we don't follow symlinks, we should still check if the symlink itself matches
+			normalizedPath := filepath.ToSlash(path)
+			include, err := ff.shouldIncludeFile(normalizedPath)
+			if err != nil {
+				return err
+			}
+			if include {
+				resultChan <- Result{Path: path}
+			}
 		}
-		return ff.processSymlink(path, resultChan)
+		return nil
 	}
 
 	// Skip directories as they're handled by WalkDir
