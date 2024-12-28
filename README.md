@@ -16,7 +16,7 @@
 ## ✨ Features
 
 -   📦 **Multiple Output Formats** - XML, JSON, or YAML with preserved metadata
--   🎯 **Smart Pattern Matching** - Powerful glob patterns for precise file selection
+-   🎯 **Smart Pattern Matching** - Powerful glob patterns for precise file selection ([see patterns guide](docs/patterns.md))
 -   ⚡️ **Concurrent Processing** - Parallel file processing with safety limits
 -   📊 **Size Control** - File and output size limits with detailed reporting
 -   🧹 **Code Cleaning** - Remove comments and optimize while preserving docs
@@ -111,6 +111,10 @@ filefusion -o output.yaml /path/to/project
 ```
 
 ### Pattern Matching Rules
+
+For detailed pattern matching examples and rules, please refer to our [Pattern Guide](docs/patterns.md).
+
+Here are some common patterns:
 
 | Pattern        | Description                    |
 | -------------- | ------------------------------ |

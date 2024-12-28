@@ -19,6 +19,12 @@ type FileContent struct {
 type OutputType string
 
 const (
+	ColorRed   = "\033[1;31m" // bold red
+	ColorGreen = "\033[0;32m" // green
+	ColorReset = "\033[0m"
+)
+
+const (
 	OutputTypeXML  OutputType = "XML"
 	OutputTypeJSON OutputType = "JSON"
 	OutputTypeYAML OutputType = "YAML"
@@ -33,6 +39,7 @@ type MixOptions struct {
 	MaxOutputSize  int64
 	OutputType     OutputType
 	CleanerOptions *cleaner.CleanerOptions
+	IgnoreSymlinks bool
 }
 
 func validatePattern(pattern string) error {
