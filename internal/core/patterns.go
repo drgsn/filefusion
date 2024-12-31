@@ -353,6 +353,9 @@ func (v *PatternValidator) ExpandPattern(pattern string) ([]string, error) {
 
 	// First split on top-level commas
 	patterns := v.splitPatterns(pattern)
+	for i, p := range patterns {
+		patterns[i] = strings.TrimSpace(p)
+	}
 	var result []string
 
 	// Expand each pattern
